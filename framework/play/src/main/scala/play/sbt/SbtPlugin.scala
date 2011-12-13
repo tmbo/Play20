@@ -75,6 +75,7 @@ object PlayProject extends Plugin {
 
   val templatesTypes = SettingKey[PartialFunction[String, (String, String)]]("play-templates-formats")
   val minify = SettingKey[Boolean]("minify", "Whether assets (Javascript and CSS) should be minified or not")
+  val bare = SettingKey[Boolean]("bare", "Whether coffeescript assets should be compiled with --bare or not")
 
   // -- Utility methods for 0.10-> 0.11 migration
   def inAllDeps[T](base: ProjectRef, deps: ProjectRef => Seq[ProjectRef], key: ScopedSetting[T], data: Settings[Scope]): Seq[T] =
@@ -186,8 +187,8 @@ object PlayProject extends Plugin {
 
   // ----- Assets
 
-  def AssetsCompiler(name: String, files: (File) => PathFinder, naming: (String) => String, compile: (File, Boolean) => (String, Seq[File])) =
-    (sourceDirectory in Compile, resourceManaged in Compile, cacheDirectory, minify) map { (src, resources, cache, min) =>
+  def AssetsCompiler(name: String, files: (File) => PathFinder, naming: (String) => String, compile: (File, Boolean, Boolean) => (String, Seq[File])) =
+    (sourceDirectory in Compile, resourceManaged in Compile, cacheDirectory, minify, bare) map { (src, resources, cache, min, bar) =>
 
       import java.io._
 
@@ -205,7 +206,7 @@ object PlayProject extends Plugin {
           case (sourceFile, name) => sourceFile -> ("public/" + naming(name))
         }.flatMap {
           case (sourceFile, name) => {
-            val ((css, dependencies), out) = compile(sourceFile, min) -> new File(resources, name)
+            val ((css, dependencies), out) = compile(sourceFile, min, bar) -> new File(resources, name)
             IO.write(out, css)
             dependencies.map(_ -> out)
           }
@@ -230,12 +231,12 @@ object PlayProject extends Plugin {
   val LessCompiler = AssetsCompiler("less",
     { assets => (assets ** "*.less") },
     { name => name.replace(".less", ".css") },
-    { (lessFile, minify) => play.core.less.LessCompiler.compile(lessFile, minify) })
+    { (lessFile, minify, bare) => play.core.less.LessCompiler.compile(lessFile, minify) })
 
   val JavascriptCompiler = AssetsCompiler("javascripts",
     { assets => (assets ** "*.js") },
     identity,
-    { (jsFile, minify) =>
+    { (jsFile, minify, bare) =>
       val (fullSource, minified, dependencies) = play.core.jscompile.JavascriptCompiler.compile(jsFile)
       (if (minify) minified else fullSource, dependencies)
     })
@@ -243,7 +244,7 @@ object PlayProject extends Plugin {
   val CoffeescriptCompiler = AssetsCompiler("coffeescript",
     { assets => (assets ** "*.coffee") },
     { name => name.replace(".coffee", ".js") },
-    { (coffeeFile, minify) => (play.core.coffeescript.CoffeescriptCompiler.compile(coffeeFile), Seq(coffeeFile)) })
+    { (coffeeFile, minify, bare) => (play.core.coffeescript.CoffeescriptCompiler.compile(coffeeFile, bare), Seq(coffeeFile)) })
 
   // ----- Post compile (need to be refactored and fully configurable)
 
@@ -521,7 +522,7 @@ object PlayProject extends Plugin {
 
         PlayProject.synchronized {
 
-          val r = Project.evaluateTask(playReload, state).get.toEither
+          Project.evaluateTask(playReload, state).get.toEither
             .left.map { incomplete =>
               Incomplete.allExceptions(incomplete).headOption.map {
                 case e: PlayException => e
@@ -540,7 +541,6 @@ object PlayProject extends Plugin {
               }
             }
 
-          r
         }
 
       }
@@ -1011,6 +1011,8 @@ object PlayProject extends Plugin {
     resourceGenerators in Compile <+= JavascriptCompiler,
 
     minify := false,
+
+    bare := true,
 
     playResourceDirectories := Seq.empty[File],
 

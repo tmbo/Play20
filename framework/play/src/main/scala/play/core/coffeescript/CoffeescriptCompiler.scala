@@ -28,18 +28,23 @@ object CoffeescriptCompiler {
     val coffee = scope.get("CoffeeScript", scope).asInstanceOf[NativeObject]
     val compilerFunction = coffee.get("compile", scope).asInstanceOf[Function]
 
+    val bareOpts = ctx.evaluateString(scope, "({bare: %b});".format(true), null, 1, null)
+
     Context.exit
 
-    (source: File) => {
+    (source: File, bare: Boolean) => {
       val coffeeCode = Path(source).slurpString.replace("\r", "")
-      Context.call(null, compilerFunction, scope, scope, Array(coffeeCode)).asInstanceOf[String]
+      if (bare)
+        Context.call(null, compilerFunction, scope, scope, Array(coffeeCode, bareOpts)).asInstanceOf[String]
+      else
+        Context.call(null, compilerFunction, scope, scope, Array(coffeeCode)).asInstanceOf[String]
     }
 
   }
 
-  def compile(source: File): String = {
+  def compile(source: File, bare: Boolean): String = {
     try {
-      compiler(source)
+      compiler(source, bare)
     } catch {
       case e: JavaScriptException => {
 
