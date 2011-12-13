@@ -1,4 +1,4 @@
-## FORK Supports --bare option for coffee script
+FORK of Play 2.0: Supports --bare option for coffee script
 
 # Play 2.0 beta
 
