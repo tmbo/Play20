@@ -1,3 +1,5 @@
+## FORK Supports --bare option for coffee script
+
 # Play 2.0 beta
 
 Play 2.0 is a Java and Scala Web application framework (http://www.playframework.org/2.0).
