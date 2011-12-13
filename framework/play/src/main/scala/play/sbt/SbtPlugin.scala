@@ -201,17 +201,19 @@ object PlayProject extends Plugin {
 
         // Delete previous generated files
         previousRelation._2s.foreach(IO.delete)
-
+        val t1 = System.currentTimeMillis()
         val generated = ((sourceFiles --- ((src / "assets") ** "_*")) x relativeTo(Seq(src / "assets"))).map {
           case (sourceFile, name) => sourceFile -> ("public/" + naming(name))
         }.flatMap {
           case (sourceFile, name) => {
+            val t = sys.current
             val ((css, dependencies), out) = compile(sourceFile, min, bar) -> new File(resources, name)
             IO.write(out, css)
             dependencies.map(_ -> out)
           }
         }
-
+        val t2 = System.currentTimeMillis()
+        println(name+" Compile Time: "+(t2-t1))
         Sync.writeInfo(cacheFile,
           Relation.empty[File, File] ++ generated,
           currentInfos)(FileInfo.lastModified.format)

@@ -11,9 +11,9 @@ object CoffeescriptCompiler {
   import scala.collection.JavaConverters._
 
   import scalax.file._
+  import scala.sys.process._
 
-  private lazy val compiler = {
-    val ctx = Context.enter; ctx.setOptimizationLevel(-1)
+  private lazy val compiler = { /*val ctx = Context.enter; ctx.setOptimizationLevel(-1)
     val global = new Global; global.init(ctx)
     val scope = ctx.initStandardObjects(global)
 
@@ -31,13 +31,15 @@ object CoffeescriptCompiler {
     val bareOpts = ctx.evaluateString(scope, "({bare: %b});".format(true), null, 1, null)
 
     Context.exit
-
-    (source: File, bare: Boolean) => {
-      val coffeeCode = Path(source).slurpString.replace("\r", "")
+    */ (source: File, bare: Boolean) =>
+    {
+      "coffee -scb" #< source !!
+      /*val coffeeCode = Path(source).slurpString.replace("\r", "")
       if (bare)
         Context.call(null, compilerFunction, scope, scope, Array(coffeeCode, bareOpts)).asInstanceOf[String]
       else
         Context.call(null, compilerFunction, scope, scope, Array(coffeeCode)).asInstanceOf[String]
+      */
     }
 
   }
