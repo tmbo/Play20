@@ -2,58 +2,41 @@ package play.core.coffeescript
 
 import java.io._
 import play.api._
+import scala.sys.process._
+
+case class ExecLogger(var messages: List[String] = Nil,
+  var error: List[String] = Nil)
+  extends ProcessLogger {
+  def out(s: => String) {
+    messages ::= s
+  }
+
+  def err(s: => String) {
+    error ::= s
+  }
+
+  def buffer[T](f: => T): T = f
+}
 
 object CoffeescriptCompiler {
-
-  import org.mozilla.javascript._
-  import org.mozilla.javascript.tools.shell._
 
   import scala.collection.JavaConverters._
 
   import scalax.file._
-  import scala.sys.process._
 
-  private lazy val compiler = { /*val ctx = Context.enter; ctx.setOptimizationLevel(-1)
-    val global = new Global; global.init(ctx)
-    val scope = ctx.initStandardObjects(global)
-
-    val wrappedCoffeescriptCompiler = Context.javaToJS(this, scope)
-    ScriptableObject.putProperty(scope, "CoffeescriptCompiler", wrappedCoffeescriptCompiler)
-
-    ctx.evaluateReader(scope, new InputStreamReader(
-      this.getClass.getClassLoader.getResource("coffee-script.js").openConnection().getInputStream()),
-      "coffee-script.js",
-      1, null)
-
-    val coffee = scope.get("CoffeeScript", scope).asInstanceOf[NativeObject]
-    val compilerFunction = coffee.get("compile", scope).asInstanceOf[Function]
-
-    val bareOpts = ctx.evaluateString(scope, "({bare: %b});".format(true), null, 1, null)
-
-    Context.exit
-    */ (source: File, bare: Boolean) =>
-    {
-      "coffee -scb" #< source !!
-      /*val coffeeCode = Path(source).slurpString.replace("\r", "")
-      if (bare)
-        Context.call(null, compilerFunction, scope, scope, Array(coffeeCode, bareOpts)).asInstanceOf[String]
-      else
-        Context.call(null, compilerFunction, scope, scope, Array(coffeeCode)).asInstanceOf[String]
-      */
-    }
-
-  }
-
-  def compile(source: File, bare: Boolean): String = {
+  def compile(source: File, bare: Boolean) = {
+    val logger = new ExecLogger
     try {
-      compiler(source, bare)
+      "coffee -scb" #< source !! logger
     } catch {
-      case e: JavaScriptException => {
-
+      case e: java.lang.RuntimeException => {
+        val error = logger.error match {
+          case x if (x.size > 0) => x.last
+          case _ => e.toString
+        }
         val line = """.*on line ([0-9]+).*""".r
-        val error = e.getValue.asInstanceOf[Scriptable]
 
-        throw ScriptableObject.getProperty(error, "message").asInstanceOf[String] match {
+        throw error match {
           case msg @ line(l) => CompilationException(
             msg,
             source,
@@ -63,17 +46,18 @@ object CoffeescriptCompiler {
             source,
             None)
         }
-
       }
     }
   }
-
 }
 
 case class CompilationException(message: String, coffeeFile: File, atLine: Option[Int]) extends PlayException(
   "Compilation error", message) with PlayException.ExceptionSource {
   def line = atLine
+
   def position = None
+
   def input = Some(scalax.file.Path(coffeeFile))
+
   def sourceName = Some(coffeeFile.getAbsolutePath)
 }

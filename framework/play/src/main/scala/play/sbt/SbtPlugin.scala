@@ -206,7 +206,6 @@ object PlayProject extends Plugin {
           case (sourceFile, name) => sourceFile -> ("public/" + naming(name))
         }.flatMap {
           case (sourceFile, name) => {
-            val t = sys.current
             val ((css, dependencies), out) = compile(sourceFile, min, bar) -> new File(resources, name)
             IO.write(out, css)
             dependencies.map(_ -> out)
