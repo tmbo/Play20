@@ -24,7 +24,7 @@ object CoffeescriptCompiler {
 
   import scalax.file._
 
-  def compile(source: File, bare: Boolean) = {
+  def compile(source: File) = {
     val logger = new ExecLogger
     try {
       "coffee -scb" #< source !! logger
