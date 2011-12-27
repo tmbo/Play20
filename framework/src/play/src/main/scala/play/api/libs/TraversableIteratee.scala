@@ -2,17 +2,23 @@ package play.api.libs.iteratee
 
 object Traversable {
 
-  def passAlong[M] = new Enumeratee[M, M] {
-    def apply[A](it: Iteratee[M, A]): Iteratee[M, Iteratee[M, A]] = {
-      it.mapDone(a => Done(a, Input.Empty))
+  def passAlong[M] = new Enumeratee.CheckDone[M, M] {
 
+    def continue[A](f: Input[M] => Iteratee[M, A]): Iteratee[M, Iteratee[M, A]] = {
+      Cont(from => {
+        val next = f(from)
+        next.pureFlatFold(
+          (_, _) => Done(next, from),
+          k => continue(k),
+          (_, _) => Done(next, from))
+      })
     }
 
   }
 
   def takeUpTo[M](count: Int)(implicit p: M => scala.collection.TraversableLike[_, M]): Enumeratee[M, M] = new Enumeratee[M, M] {
 
-    def apply[A](it: Iteratee[M, A]): Iteratee[M, Iteratee[M, A]] = {
+    def applyOn[A](it: Iteratee[M, A]): Iteratee[M, Iteratee[M, A]] = {
 
       def step(inner: Iteratee[M, A], leftToTake: Int)(in: Input[M]): Iteratee[M, Iteratee[M, A]] = {
         in match {
@@ -39,7 +45,7 @@ object Traversable {
 
   def take[M](count: Int)(implicit p: M => scala.collection.TraversableLike[_, M]): Enumeratee[M, M] = new Enumeratee[M, M] {
 
-    def apply[A](it: Iteratee[M, A]): Iteratee[M, Iteratee[M, A]] = {
+    def applyOn[A](it: Iteratee[M, A]): Iteratee[M, Iteratee[M, A]] = {
 
       def step(inner: Iteratee[M, A], leftToTake: Int)(in: Input[M]): Iteratee[M, Iteratee[M, A]] = {
         in match {
@@ -66,7 +72,7 @@ object Traversable {
 
   def drop[M](count: Int)(implicit p: M => scala.collection.TraversableLike[_, M]): Enumeratee[M, M] = new Enumeratee[M, M] {
 
-    def apply[A](inner: Iteratee[M, A]): Iteratee[M, Iteratee[M, A]] = {
+    def applyOn[A](inner: Iteratee[M, A]): Iteratee[M, Iteratee[M, A]] = {
 
       def step(it: Iteratee[M, A], leftToDrop: Int)(in: Input[M]): Iteratee[M, Iteratee[M, A]] = {
         in match {
@@ -78,7 +84,7 @@ object Traversable {
                 val toPass = if (i < 0) Input.El(e.drop(leftToDrop)) else Input.Empty
                 it.pureFlatFold(
                   (_, _) => Done(it, toPass),
-                  k => passAlong(k(toPass)),
+                  k => passAlong.applyOn(k(toPass)),
                   (_, _) => Done(it, toPass))
 
             }

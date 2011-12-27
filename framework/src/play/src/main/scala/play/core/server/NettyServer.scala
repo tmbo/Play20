@@ -96,7 +96,7 @@ class NettyServer(appProvider: ApplicationProvider, port: Int, mode: Mode.Mode =
           next.pureFold(
             (a, e) => if (!redeemed) { p.redeem(next); iteratee = null; p = null; redeemed = true },
             k => (),
-            (msg, e) => if (!redeemed) { p.redeem(Done(Left(Results.InternalServerError),e)); iteratee = null; p = null; redeemed = true })
+            (msg, e) => if (!redeemed) { p.redeem(Done(Left(Results.InternalServerError), e)); iteratee = null; p = null; redeemed = true })
         }
       }
 
@@ -140,9 +140,9 @@ class NettyServer(appProvider: ApplicationProvider, port: Int, mode: Mode.Mode =
         val iterateeAgent = Agent[Option[Iteratee[A, Any]]](None)
         private val promise: Promise[Iteratee[A, Any]] with Redeemable[Iteratee[A, Any]] = Promise[Iteratee[A, Any]]()
 
-        def apply[R, EE >: A](i: Iteratee[EE, R]) = {
+        def apply[R](i: Iteratee[A, R]) = {
           iterateeAgent.send(_.orElse(Some(i.asInstanceOf[Iteratee[A, Any]])))
-          promise.asInstanceOf[Promise[Iteratee[EE, R]]]
+          promise.asInstanceOf[Promise[Iteratee[A, R]]]
         }
 
         def frameReceived(ctx: ChannelHandlerContext, input: Input[A]) {
@@ -285,7 +285,7 @@ class NettyServer(appProvider: ApplicationProvider, port: Int, mode: Mode.Mode =
                 val channelBuffer = ChannelBuffers.dynamicBuffer(512)
                 val writer: Function2[ChannelBuffer, r.BODY_CONTENT, Unit] = (c, x) => c.writeBytes(r.writeable.transform(x))
                 val stringIteratee = Iteratee.fold(channelBuffer)((c, e: r.BODY_CONTENT) => { writer(c, e); c })
-                val p = stringIteratee <<: body
+                val p = body |>> stringIteratee
                 p.flatMap(i => i.run)
                   .onRedeem { buffer =>
                     nettyResponse.setContent(buffer)
@@ -374,33 +374,33 @@ class NettyServer(appProvider: ApplicationProvider, port: Int, mode: Mode.Mode =
                       Enumerator(body).andThen(Enumerator.enumInput(EOF))
                     }
 
-                    (bodyParser <<: bodyEnumerator): Promise[Iteratee[Array[Byte], Either[Result, action.BODY_CONTENT]]]
+                    (bodyEnumerator |>> bodyParser): Promise[Iteratee[Array[Byte], Either[Result, action.BODY_CONTENT]]]
                   }
                 }
 
               val eventuallyResultOrRequest =
                 eventuallyResultOrBody
-                  .flatMap (it => it.run)
-                  .map { _.right.map ( b =>
+                  .flatMap(it => it.run)
+                  .map {
+                    _.right.map(b =>
                       new Request[action.BODY_CONTENT] {
-                          def uri = nettyHttpRequest.getUri
-                          def path = nettyUri.getPath
-                          def method = nettyHttpRequest.getMethod.getName
-                          def queryString = parameters
-                          def headers = rHeaders
-                          def cookies = rCookies
-                          def username = None
-                          val body = b
+                        def uri = nettyHttpRequest.getUri
+                        def path = nettyUri.getPath
+                        def method = nettyHttpRequest.getMethod.getName
+                        def queryString = parameters
+                        def headers = rHeaders
+                        def cookies = rCookies
+                        def username = None
+                        val body = b
                       })
-              }
+                  }
 
-              eventuallyResultOrRequest.extend (_.value match {
-                    case Redeemed(Left(result)) => response.handle(result)
-                    case Redeemed(Right(request)) =>
-                      invoke(request, response, action.asInstanceOf[Action[action.BODY_CONTENT]], app)
-                  })
+              eventuallyResultOrRequest.extend(_.value match {
+                case Redeemed(Left(result)) => response.handle(result)
+                case Redeemed(Right(request)) =>
+                  invoke(request, response, action.asInstanceOf[Action[action.BODY_CONTENT]], app)
+              })
 
-              
             }
 
             case Right((ws @ WebSocket(f), app)) if (isWebSocket(nettyHttpRequest)) => {
@@ -450,18 +450,18 @@ class NettyServer(appProvider: ApplicationProvider, port: Int, mode: Mode.Mode =
   allChannels.add(bootstrap.bind(new java.net.InetSocketAddress(port)))
 
   mode match {
-    case Mode.Test => 
+    case Mode.Test =>
     case _ => Logger("play").info("Listening for HTTP on port %s...".format(port))
   }
 
   def stop() {
     Play.stop()
-    
+
     mode match {
       case Mode.Test =>
       case _ => Logger("play").warn("Stopping server...")
     }
-    
+
     allChannels.disconnect().awaitUninterruptibly()
     allChannels.close().awaitUninterruptibly()
     bootstrap.releaseExternalResources()
