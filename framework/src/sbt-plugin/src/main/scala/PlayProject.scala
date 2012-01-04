@@ -31,7 +31,6 @@ object PlayProject extends Plugin with PlayExceptions with PlayKeys with PlayRel
     import com.typesafe.sbteclipse.core.EclipsePlugin._
     Project(name, path)
       .settings(Seq(testListeners += testListener): _*)
-      .settings(parallelExecution in Test := false)
       .settings(EclipsePlugin.eclipseSettings: _*)
       .settings(
         EclipseKeys.commandName := "eclipsify",
@@ -42,7 +41,8 @@ object PlayProject extends Plugin with PlayExceptions with PlayKeys with PlayRel
       .settings(
         scalacOptions ++= Seq("-deprecation", "-unchecked", "-Xcheckinit", "-encoding", "utf8"),
         version := applicationVersion,
-        libraryDependencies ++= dependencies
+        libraryDependencies ++= dependencies,
+        ivyLoggingLevel := UpdateLogging.Quiet
       )
   }
 }

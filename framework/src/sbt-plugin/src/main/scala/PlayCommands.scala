@@ -1,6 +1,7 @@
 package sbt
 
 import Keys._
+import CommandSupport.{ClearOnFailure,FailureWall}
 
 import play.api._
 import play.core._
@@ -9,6 +10,8 @@ import play.utils.Colors
 
 import PlayExceptions._
 import PlayKeys._
+
+import scala.annotation.tailrec
 
 trait PlayCommands {
   this: PlayReloader =>
@@ -77,7 +80,7 @@ trait PlayCommands {
   }
 
   val playCopyResources = TaskKey[Seq[(File, File)]]("play-copy-resources")
-  val playCopyResourcesTask = (baseDirectory, managedResources in Compile, resourceManaged in Compile, playResourceDirectories, classDirectory in Compile, cacheDirectory, streams) map { (b, resources, resourcesDirectories, r, t, c, s) =>
+  val playCopyResourcesTask = (baseDirectory, managedResources in Compile, resourceManaged in Compile, playAssetsDirectories, classDirectory in Compile, cacheDirectory, streams) map { (b, resources, resourcesDirectories, r, t, c, s) =>
     val cacheFile = c / "copy-resources"
     val mappings = (r.map(_ ***).reduceLeft(_ +++ _) x rebase(b, t)) ++ (resources x rebase(resourcesDirectories, t))
     s.log.debug("Copy play resource mappings: " + mappings.mkString("\n\t", "\n\t", ""))
@@ -115,9 +118,9 @@ trait PlayCommands {
       """java "$@" -cp "`dirname $0`/lib/*" play.core.server.NettyServer `dirname $0`""" /* */ )
     val scripts = Seq(start -> (packageName + "/start"))
 
-    val conf = Seq((root / "conf" / "application.conf") -> (packageName + "/conf/application.conf"))
+    val other = Seq((root / "README") -> (packageName + "/README"))
 
-    IO.zip(libs ++ scripts ++ conf, zip)
+    IO.zip(libs ++ scripts ++ other, zip)
     IO.delete(start)
 
     println()
@@ -423,26 +426,36 @@ trait PlayCommands {
   }
 
   // ----- Play commands
-
-  val playRunCommand = playRunCommandBase("run", "(Server started, use Ctrl+D to stop and go back to the console...)")
-
-  def playRunCommandBase(commandName: String, message: String) = Command.args(commandName, "<port>") { (state: State, args: Seq[String]) =>
-
-    // Parse HTTP port argument
-    val port = args.headOption.map { portString =>
+  
+  private def filterArgs(args: Seq[String]): (Seq[(String,String)], Int) = {
+    val (properties, others) = args.span(_.startsWith("-D"))
+    val javaProperties = properties.map(_.drop(2).split('=')).map(a => a(0) -> a(1))
+    val port = others.headOption.map { portString =>
       try {
         Integer.parseInt(portString)
       } catch {
         case e => sys.error("Invalid port argument: " + portString)
       }
     }.getOrElse(9000)
+    (javaProperties, port)
+  }
+
+  val playRunCommand = Command.args("run", "<args>") { (state: State, args: Seq[String]) =>
+
+    // Parse HTTP port argument
+    val (properties, port) = filterArgs(args)
+    
+    // Set Java properties
+    properties.foreach {
+      case (key, value) => System.setProperty(key, value)
+    }
 
     println()
 
     val sbtLoader = this.getClass.getClassLoader
     val commonLoader = Project.evaluateTask(playCommonClassloader, state).get.toEither.right.get
 
-    Project.evaluateTask(dependencyClasspath in Compile, state).get.toEither.right.map { dependencies =>
+    val maybeNewState = Project.evaluateTask(dependencyClasspath in Compile, state).get.toEither.right.map { dependencies =>
 
       val classpath = dependencies.map(_.data.toURI.toURL).toArray
 
@@ -475,6 +488,30 @@ trait PlayCommands {
             }
           }
         }
+        
+        // -- Delegate resource loading. We have to hack here because the default implementation are already recursives.
+        
+        override def getResource(name: String): java.net.URL = {
+          val findResource = classOf[ClassLoader].getDeclaredMethod("findResource", classOf[String])
+          findResource.setAccessible(true)
+          val resource = reloader.currentApplicationClassLoader.map(findResource.invoke(_, name).asInstanceOf[java.net.URL]).orNull
+          if(resource == null) {
+            super.getResource(name)
+          } else {
+            resource
+          }
+        } 
+        
+        override def getResources(name: String): java.util.Enumeration[java.net.URL] = {
+          val findResources = classOf[ClassLoader].getDeclaredMethod("findResources", classOf[String])
+          findResources.setAccessible(true)
+          val resources1 = reloader.currentApplicationClassLoader.map(findResources.invoke(_, name).asInstanceOf[java.util.Enumeration[java.net.URL]]).getOrElse(new java.util.Vector[java.net.URL]().elements)
+          val resources2 = super.getResources(name)
+          val resources = new java.util.Vector[java.net.URL]
+          while(resources1.hasMoreElements) resources.add(resources1.nextElement)
+          while(resources2.hasMoreElements) resources.add(resources2.nextElement)
+          resources.elements
+        }
 
         override def toString = {
           "SBT/Play shared ClassLoader, with: " + (getURLs.toSeq) + ", using parent: " + (getParent)
@@ -491,30 +528,100 @@ trait PlayCommands {
       val server = mainDev.invoke(null, reloader, port: java.lang.Integer).asInstanceOf[play.core.server.ServerWithStop]
 
       println()
-      println(Colors.green(message))
+      println(Colors.green("(Server started, use Ctrl+D to stop and go back to the console...)"))
       println()
 
-      waitForKey()
+      val ContinuousState = AttributeKey[WatchState]("watch state", "Internal: tracks state for continuous execution.")
+      def isEOF(c: Int): Boolean = c == 4
+
+      @tailrec def executeContinuously(watched: Watched, s: State, reloader: SBTLink, ws:
+      Option[WatchState] = None): Option[String] = {
+        @tailrec def shouldTerminate: Boolean = (System.in.available > 0) && (isEOF(System.in.read()) || shouldTerminate)
+
+        val sourcesFinder = PathFinder { watched watchPaths s }
+        val watchState = ws.getOrElse(s get ContinuousState getOrElse WatchState.empty)
+
+        val (triggered, newWatchState, newState) =
+          try {
+            val (triggered, newWatchState) = SourceModificationWatch.watch(sourcesFinder, watched.pollInterval, watchState)(shouldTerminate)
+            (triggered, newWatchState, s)
+          }
+          catch { case e: Exception =>
+            val log = s.log
+            log.error("Error occurred obtaining files to watch.  Terminating continuous execution...")
+            BuiltinCommands.handleException(e, s, log)
+            (false, watchState, s.fail)
+          }
+
+
+        if(triggered) {
+          //Then launch compile
+          PlayProject.synchronized{
+            Project.evaluateTask(compile in Compile, newState)
+          }
+
+          // Avoid launching too much compilation
+          Thread.sleep(Watched.PollDelayMillis)
+
+          // Call back myself
+          executeContinuously(watched, newState, reloader, Some(newWatchState))
+        }
+        else {
+          // Stop 
+          Some("Okay, i'm done")
+        }
+      }
+
+      // If we have both Watched.Configuration and Watched.ContinuousState
+      // attributes and if Watched.ContinuousState.count is 1 then we assume
+      // we're in ~ run mode
+      val maybeContinuous = state.get(Watched.Configuration).map{ w =>
+        state.get(Watched.ContinuousState).map { ws => 
+          (ws.count == 1, w, ws)
+        }.getOrElse((false, None, None))
+      }.getOrElse((false, None, None))
+
+      val newState = maybeContinuous match {
+        case (true, w:sbt.Watched, ws) => {
+          // ~ run mode
+          consoleReader.getTerminal.disableEcho()
+          executeContinuously(w, state, reloader)
+          consoleReader.getTerminal.enableEcho()
+
+          // Remove state two first commands added by sbt ~
+          state.copy(remainingCommands = state.remainingCommands.drop(2)).remove(Watched.ContinuousState)
+        }
+        case _ => { 
+          // run mode
+          waitForKey()
+          state
+        }
+      }
 
       server.stop()
 
+      newState
+    }
+    
+    // Remove Java properties
+    properties.foreach {
+      case (key, _) => System.clearProperty(key)
     }
 
     println()
 
-    state
+    maybeNewState match {
+      case Right(x) => x
+      case _ => state
+    }
   }
+
+
 
   val playStartCommand = Command.args("start", "<port>") { (state: State, args: Seq[String]) =>
 
     // Parse HTTP port argument
-    val port = args.headOption.map { portString =>
-      try {
-        Integer.parseInt(portString)
-      } catch {
-        case e => sys.error("Invalid port argument: " + portString)
-      }
-    }.getOrElse(9000)
+    val (properties, port) = filterArgs(args)
 
     val extracted = Project.extract(state)
 
@@ -532,8 +639,8 @@ trait PlayCommands {
           val classpath = dependencies.map(_.data).map(_.getCanonicalPath).reduceLeft(_ + java.io.File.pathSeparator + _)
 
           import java.lang.{ ProcessBuilder => JProcessBuilder }
-          val builder = new JProcessBuilder(Array(
-            "java", "-Dhttp.port=" + port, "-cp", classpath, "play.core.server.NettyServer", extracted.currentProject.base.getCanonicalPath): _*)
+          val builder = new JProcessBuilder(Seq(
+            "java") ++ properties.map {case (key,value) => "-D" + key + "=" + value} ++ Seq("-Dhttp.port=" + port, "-cp", classpath, "play.core.server.NettyServer", extracted.currentProject.base.getCanonicalPath): _*)
 
           new Thread {
             override def run {
