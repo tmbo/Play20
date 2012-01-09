@@ -41,7 +41,7 @@ sealed trait AnyContent {
     case _ => None
   }
 
-  def asRaw: Option[Array[Byte]] = this match {
+  def asRaw: Option[RawBuffer] = this match {
     case AnyContentAsRaw(raw) => Some(raw)
     case _ => None
   }
@@ -51,7 +51,7 @@ sealed trait AnyContent {
 case object AnyContentAsEmpty extends AnyContent
 case class AnyContentAsText(txt: String) extends AnyContent
 case class AnyContentAsUrlFormEncoded(data: Map[String, Seq[String]]) extends AnyContent
-case class AnyContentAsRaw(raw: Array[Byte]) extends AnyContent
+case class AnyContentAsRaw(raw: RawBuffer) extends AnyContent
 case class AnyContentAsXml(xml: NodeSeq) extends AnyContent
 case class AnyContentAsJson(json: JsValue) extends AnyContent
 case class AnyContentAsMultipartFormData(mdf: MultipartFormData[TemporaryFile]) extends AnyContent
@@ -70,6 +70,76 @@ object MultipartFormData {
   case class MaxDataPartSizeExcedeed(key: String) extends Part
 }
 
+case class RawBuffer(memoryThreshold: Int) {
+
+  import play.api.libs.Files._
+  import scala.collection.mutable._
+
+  private var inMemory = new ArrayBuffer[Byte]
+  private var backedByTemporaryFile: TemporaryFile = _
+  private var outStream: OutputStream = _
+
+  private[mvc] def push(chunk: Array[Byte]) {
+    if (inMemory != null) {
+      inMemory ++= chunk
+      if (inMemory.size > memoryThreshold) {
+        backToTemporaryFile()
+      }
+    } else {
+      outStream.write(chunk)
+    }
+  }
+
+  private[mvc] def close() {
+    if (outStream != null) {
+      outStream.close()
+    }
+  }
+
+  private[mvc] def backToTemporaryFile() {
+    backedByTemporaryFile = TemporaryFile("requestBody", "asRaw")
+    outStream = new FileOutputStream(backedByTemporaryFile.file)
+    outStream.write(inMemory.toArray)
+    inMemory = null
+  }
+
+  def size: Long = {
+    if (inMemory != null) inMemory.size else backedByTemporaryFile.file.length
+  }
+
+  def asBytes(maxLength: Int = memoryThreshold): Option[Array[Byte]] = {
+    if (size <= maxLength) {
+      if (inMemory != null) {
+        Some(inMemory.toArray)
+      } else {
+        val inStream = new FileInputStream(backedByTemporaryFile.file)
+        try {
+          val buffer = new Array[Byte](size.toInt)
+          inStream.read(buffer)
+          Some(buffer)
+        } finally {
+          inStream.close()
+        }
+      }
+    } else {
+      None
+    }
+  }
+
+  def asFile: File = {
+    if (inMemory != null) {
+      backToTemporaryFile()
+      close()
+    }
+    backedByTemporaryFile.file
+  }
+
+  override def toString = {
+    "RawBuffer(inMemory=" + Option(inMemory).map(_.size).orNull + ", backedByTemporaryFile=" + backedByTemporaryFile + ")"
+  }
+
+}
+
 trait BodyParsers {
 
   object parse {
@@ -82,7 +152,7 @@ trait BodyParsers {
 
     // -- Text parser
 
-    def tolerantText(maxLength: Int): BodyParser[String] = BodyParser { request =>
+    def tolerantText(maxLength: Int): BodyParser[String] = BodyParser("text, maxLength=" + maxLength) { request =>
       Traversable.takeUpTo[Array[Byte]](maxLength)
         .transform(Iteratee.consume[Array[Byte]]().map(c => new String(c, request.charset.getOrElse("utf-8"))))
         .flatMap(Iteratee.eofOrElse(Results.EntityTooLarge))
@@ -91,24 +161,34 @@ trait BodyParsers {
 
     def tolerantText: BodyParser[String] = tolerantText(DEFAULT_MAX_TEXT_LENGTH)
 
-    def text(maxLength: Int): BodyParser[String] = when(_.contentType.exists(_ == "text/plain"), tolerantText(maxLength))
+    def text(maxLength: Int): BodyParser[String] = when(
+      _.contentType.exists(_ == "text/plain"), 
+      tolerantText(maxLength),
+      request => Play.maybeApplication.map(_.global.onBadRequest(request, "Expecting text/plain body")).getOrElse(Results.BadRequest)
+    )
 
     def text: BodyParser[String] = text(DEFAULT_MAX_TEXT_LENGTH)
 
     // -- Raw parser
 
-    def raw: BodyParser[Array[Byte]] = BodyParser { request =>
-      Iteratee.consume[Array[Byte]]().mapDone(c => Right(c))
+    def raw(memoryThreshold: Int): BodyParser[RawBuffer] = BodyParser("raw, memoryThreshold=" + memoryThreshold) { request =>
+      val buffer = RawBuffer(memoryThreshold)
+      Iteratee.mapChunk_[Array[Byte]](bytes => buffer.push(bytes)).mapDone { _ =>
+        buffer.close()
+        Right(buffer)
+      }
     }
+
+    def raw: BodyParser[RawBuffer] = raw(memoryThreshold = 100 * 1024)
 
     // -- JSON parser
 
-    def tolerantJson(maxLength: Int): BodyParser[JsValue] = BodyParser { request =>
+    def tolerantJson(maxLength: Int): BodyParser[JsValue] = BodyParser("json, maxLength=" + maxLength) { request =>
       Traversable.takeUpTo[Array[Byte]](maxLength).apply(Iteratee.consume[Array[Byte]]().map { bytes =>
         scala.util.control.Exception.allCatch[JsValue].either {
           Json.parse(new String(bytes, request.charset.getOrElse("utf-8")))
         }.left.map { e =>
-          (Results.BadRequest, bytes)
+          (Play.maybeApplication.map(_.global.onBadRequest(request, "Invalid Json")).getOrElse(Results.BadRequest), bytes)
         }
       }).flatMap(Iteratee.eofOrElse(Results.EntityTooLarge))
         .flatMap {
@@ -122,24 +202,28 @@ trait BodyParsers {
 
     def tolerantJson: BodyParser[JsValue] = tolerantJson(DEFAULT_MAX_TEXT_LENGTH)
 
-    def json(maxLength: Int): BodyParser[JsValue] = when(_.contentType.exists(m => m == "text/json" || m == "application/json"), tolerantJson(maxLength))
+    def json(maxLength: Int): BodyParser[JsValue] = when(
+      _.contentType.exists(m => m == "text/json" || m == "application/json"), 
+      tolerantJson(maxLength),
+      request => Play.maybeApplication.map(_.global.onBadRequest(request, "Expecting text/json or application/json body")).getOrElse(Results.BadRequest)
+    )
 
     def json: BodyParser[JsValue] = json(DEFAULT_MAX_TEXT_LENGTH)
 
     // -- Empty parser
 
-    def empty: BodyParser[None.type] = BodyParser { request =>
+    def empty: BodyParser[None.type] = BodyParser("empty") { request =>
       Done(Right(None), Empty)
     }
 
     // -- XML parser
 
-    def tolerantXml(maxLength: Int): BodyParser[NodeSeq] = BodyParser { request =>
+    def tolerantXml(maxLength: Int): BodyParser[NodeSeq] = BodyParser("xml, maxLength=" + maxLength) { request =>
       Traversable.takeUpTo[Array[Byte]](maxLength).apply(Iteratee.consume[Array[Byte]]().mapDone { bytes =>
         scala.util.control.Exception.allCatch[NodeSeq].either {
           XML.loadString(new String(bytes, request.charset.getOrElse("utf-8")))
         }.left.map { e =>
-          (Results.BadRequest, bytes)
+          (Play.maybeApplication.map(_.global.onBadRequest(request, "Invalid XML")).getOrElse(Results.BadRequest), bytes)
         }
       }).flatMap(Iteratee.eofOrElse(Results.EntityTooLarge))
         .flatMap {
@@ -153,13 +237,17 @@ trait BodyParsers {
 
     def tolerantXml: BodyParser[NodeSeq] = tolerantXml(DEFAULT_MAX_TEXT_LENGTH)
 
-    def xml(maxLength: Int): BodyParser[NodeSeq] = when(_.contentType.exists(_.startsWith("text/xml")), tolerantXml(maxLength))
+    def xml(maxLength: Int): BodyParser[NodeSeq] = when(
+      _.contentType.exists(_.startsWith("text/xml")), 
+      tolerantXml(maxLength),
+      request => Play.maybeApplication.map(_.global.onBadRequest(request, "Expecting text/xml body")).getOrElse(Results.BadRequest)
+    )
 
     def xml: BodyParser[NodeSeq] = xml(DEFAULT_MAX_TEXT_LENGTH)
 
     // -- File parsers
 
-    def file(to: File): BodyParser[File] = BodyParser { request =>
+    def file(to: File): BodyParser[File] = BodyParser("file, to=" + to) { request =>
       Iteratee.fold[Array[Byte], FileOutputStream](new FileOutputStream(to)) { (os, data) =>
         os.write(data)
         os
@@ -169,23 +257,23 @@ trait BodyParsers {
       }
     }
 
-    def temporaryFile: BodyParser[TemporaryFile] = BodyParser { request =>
+    def temporaryFile: BodyParser[TemporaryFile] = BodyParser("temporaryFile") { request =>
       val tempFile = TemporaryFile("requestBody", "asTemporaryFile")
       file(tempFile.file)(request).mapDone(_ => Right(tempFile))
     }
 
     // -- UrlFormEncoded
 
-    def tolerantUrlFormEncoded(maxLength: Int): BodyParser[Map[String, Seq[String]]] = BodyParser { request =>
+    def tolerantUrlFormEncoded(maxLength: Int): BodyParser[Map[String, Seq[String]]] = BodyParser("urlFormEncoded, maxLength=" + maxLength) { request =>
 
       import play.core.parsers._
       import scala.collection.JavaConverters._
 
       Traversable.takeUpTo[Array[Byte]](maxLength).apply(Iteratee.consume[Array[Byte]]().mapDone { c =>
         scala.util.control.Exception.allCatch[Map[String, Seq[String]]].either {
-          UrlFormEncodedParser.parse(new String(c, request.charset.getOrElse("utf-8")))
+          UrlFormEncodedParser.parse(new String(c, request.charset.getOrElse("utf-8")), request.charset.getOrElse("utf-8"))
         }.left.map { e =>
-          Results.BadRequest
+          Play.maybeApplication.map(_.global.onBadRequest(request, "Error parsing application/x-www-form-urlencoded")).getOrElse(Results.BadRequest)
         }
       }).flatMap(Iteratee.eofOrElse(Results.EntityTooLarge))
         .flatMap {
@@ -199,22 +287,46 @@ trait BodyParsers {
 
     def tolerantUrlFormEncoded: BodyParser[Map[String, Seq[String]]] = tolerantUrlFormEncoded(DEFAULT_MAX_TEXT_LENGTH)
 
-    def urlFormEncoded(maxLength: Int): BodyParser[Map[String, Seq[String]]] = when(_.contentType.exists(_ == "application/x-www-form-urlencoded"), tolerantUrlFormEncoded(maxLength))
+    def urlFormEncoded(maxLength: Int): BodyParser[Map[String, Seq[String]]] = when(
+      _.contentType.exists(_ == "application/x-www-form-urlencoded"), 
+      tolerantUrlFormEncoded(maxLength),
+      request => Play.maybeApplication.map(_.global.onBadRequest(request, "Expecting application/x-www-form-urlencoded body")).getOrElse(Results.BadRequest)
+    )
 
     def urlFormEncoded: BodyParser[Map[String, Seq[String]]] = urlFormEncoded(DEFAULT_MAX_TEXT_LENGTH)
 
     // -- Magic any content
 
-    def anyContent: BodyParser[AnyContent] = BodyParser { request =>
+    def anyContent: BodyParser[AnyContent] = BodyParser("anyContent") { request =>
       request.contentType match {
-        case _ if request.method == "GET" || request.method == "HEAD" => empty(request).map(_.right.map(_ => AnyContentAsEmpty))
-        case Some("text/plain") => text(request).map(_.right.map(s => AnyContentAsText(s)))
-        case Some("text/xml") => xml(request).map(_.right.map(x => AnyContentAsXml(x)))
-        case Some("text/json") => json(request).map(_.right.map(j => AnyContentAsJson(j)))
-        case Some("application/json") => json(request).map(_.right.map(j => AnyContentAsJson(j)))
-        case Some("application/x-www-form-urlencoded") => urlFormEncoded(request).map(_.right.map(d => AnyContentAsUrlFormEncoded(d)))
-        case Some("multipart/form-data") => multipartFormData(request).map(_.right.map(m => AnyContentAsMultipartFormData(m)))
-        case _ => raw(request).map(_.right.map(r => AnyContentAsRaw(r)))
+        case _ if request.method == "GET" || request.method == "HEAD" => {
+          Logger("play").trace("Parsing AnyContent as empty")
+          empty(request).map(_.right.map(_ => AnyContentAsEmpty))
+        }
+        case Some("text/plain") => {
+          Logger("play").trace("Parsing AnyContent as text")
+          text(request).map(_.right.map(s => AnyContentAsText(s)))
+        }
+        case Some("text/xml") => {
+          Logger("play").trace("Parsing AnyContent as xml")
+          xml(request).map(_.right.map(x => AnyContentAsXml(x)))
+        }
+        case Some("text/json") | Some("application/json") => {
+          Logger("play").trace("Parsing AnyContent as json")
+          json(request).map(_.right.map(j => AnyContentAsJson(j)))
+        }
+        case Some("application/x-www-form-urlencoded") => {
+          Logger("play").trace("Parsing AnyContent as urlFormEncoded")
+          urlFormEncoded(request).map(_.right.map(d => AnyContentAsUrlFormEncoded(d)))
+        }
+        case Some("multipart/form-data") => {
+          Logger("play").trace("Parsing AnyContent as multipartFormData")
+          multipartFormData(request).map(_.right.map(m => AnyContentAsMultipartFormData(m)))
+        }
+        case _ => {
+          Logger("play").trace("Parsing AnyContent as raw")
+          raw(request).map(_.right.map(r => AnyContentAsRaw(r)))
+        }
       }
     }
 
@@ -222,7 +334,7 @@ trait BodyParsers {
 
     def multipartFormData: BodyParser[MultipartFormData[TemporaryFile]] = multipartFormData(Multipart.handleFilePartAsTemporaryFile)
 
-    def multipartFormData[A](filePartHandler: Multipart.PartHandler[FilePart[A]]): BodyParser[MultipartFormData[A]] = BodyParser { request =>
+    def multipartFormData[A](filePartHandler: Multipart.PartHandler[FilePart[A]]): BodyParser[MultipartFormData[A]] = BodyParser("multipartFormData") { request =>
       val handler: Multipart.PartHandler[Either[Part, FilePart[A]]] =
         Multipart.handleDataPart.andThen(_.map(Left(_)))
           .orElse({ case Multipart.FileInfoMatcher(partName, fileName, _) if fileName.trim.isEmpty => Done(Left(MissingFilePart(partName)), Input.Empty) }: Multipart.PartHandler[Either[Part, FilePart[A]]])
@@ -299,7 +411,7 @@ trait BodyParsers {
 
           }
 
-        }.getOrElse(parse.error(BadRequest("Missing boundary header")))
+        }.getOrElse(parse.error(Play.maybeApplication.map(_.global.onBadRequest(request, "Missing boundary header")).getOrElse(Results.BadRequest)))
 
       }
 
@@ -398,7 +510,7 @@ trait BodyParsers {
 
     // -- Parsing utilities
 
-    def maxLength[A](maxLength: Int, parser: BodyParser[A]): BodyParser[Either[MaxSizeExceeded, A]] = BodyParser { request =>
+    def maxLength[A](maxLength: Int, parser: BodyParser[A]): BodyParser[Either[MaxSizeExceeded, A]] = BodyParser("maxLength=" + maxLength + ", wrapping=" + parser.toString) { request =>
       Traversable.takeUpTo[Array[Byte]](maxLength).transform(parser(request)).flatMap(Iteratee.eofOrElse(MaxSizeExceeded(maxLength))).map {
         case Right(Right(result)) => Right(Right(result))
         case Right(Left(badRequest)) => Left(badRequest)
@@ -406,7 +518,7 @@ trait BodyParsers {
       }
     }
 
-    def error[A](result: Result = Results.BadRequest): BodyParser[A] = BodyParser { request =>
+    def error[A](result: Result): BodyParser[A] = BodyParser("error, result=" + result) { request =>
       Done(Left(result), Empty)
     }
 
@@ -414,12 +526,12 @@ trait BodyParsers {
       f(request)(request)
     }
 
-    def when[A](predicate: RequestHeader => Boolean, parser: BodyParser[A], badResult: Result = Results.BadRequest): BodyParser[A] = {
-      BodyParser { request =>
+    def when[A](predicate: RequestHeader => Boolean, parser: BodyParser[A], badResult: RequestHeader => Result): BodyParser[A] = {
+      BodyParser("conditional, wrapping=" + parser.toString) { request =>
         if (predicate(request)) {
           parser(request)
         } else {
-          Done(Left(badResult), Empty)
+          Done(Left(badResult(request)), Empty)
         }
       }
     }

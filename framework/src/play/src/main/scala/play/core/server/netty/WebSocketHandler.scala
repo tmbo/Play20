@@ -49,8 +49,8 @@ private[server] trait WebSocketHandler {
               val next = k(input)
               next.fold(
                 (a, e) => {
+                  iterateeAgent.close()
                   ctx.getChannel().disconnect();
-                  iterateeAgent.close();
                   promise.redeem(next);
                   println("cleaning for channel " + ctx.getChannel());
                   Promise.pure(next)
@@ -70,7 +70,7 @@ private[server] trait WebSocketHandler {
             case frame: Frame if nettyFrameFormatter.fromFrame.isDefinedAt(frame) => {
               enumerator.frameReceived(ctx, El(nettyFrameFormatter.fromFrame(frame)))
             }
-            case frame: CloseFrame => enumerator.frameReceived(ctx, EOF)
+            case frame: CloseFrame => { ctx.getChannel().disconnect(); enumerator.frameReceived(ctx, EOF) }
             case frame: Frame => //
             case _ => //
           }
@@ -98,7 +98,6 @@ private[server] trait WebSocketHandler {
     val (enumerator, handler) = newWebSocketInHandler(frameFormatter)
     val p: ChannelPipeline = ctx.getChannel().getPipeline();
     p.replace("handler", "handler", handler);
-
     enumerator
   }
 

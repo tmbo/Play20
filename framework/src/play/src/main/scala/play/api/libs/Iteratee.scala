@@ -17,6 +17,18 @@ object Iteratee {
       error: (String, Input[E]) => Promise[B]): Promise[B] = i.flatMap(_.fold(done, cont, error))
   }
 
+  /**
+   * Create an [[play.api.libs.iteratee.Iteratee]] which folds the content of the Input using a given function
+   *
+   * Example:
+   * {{{
+   *   // Count the number of input elements
+   *   def count[E]: Iteratee[E, Int] = Iteratee.fold(0)((c, _) => c + 1)
+   * }}}
+   *
+   * @param state initial state
+   * @param f a function folding the previous state and an input to a new state
+   */
   def fold[E, A](state: A)(f: (A, E) => A): Iteratee[E, A] = {
     def step(s: A)(i: Input[E]): Iteratee[E, A] = i match {
 
@@ -25,6 +37,20 @@ object Iteratee {
       case Input.El(e) => { val s1 = f(s, e); Cont[E, A](i => step(s1)(i)) }
     }
     (Cont[E, A](i => step(state)(i)))
+  }
+
+  def fold1[E, A](state: A)(f: (A, E) => Promise[A]): Iteratee[E, A] = {
+    def step(s: A)(i: Input[E]): Iteratee[E, A] = i match {
+
+      case Input.EOF => Done(s, Input.EOF)
+      case Input.Empty => Cont[E, A](i => step(s)(i))
+      case Input.El(e) => { val newS = f(s, e); flatten(newS.map(s1 => Cont[E, A](i => step(s1)(i)))) }
+    }
+    (Cont[E, A](i => step(state)(i)))
+  }
+
+  def fold1[E, A](state: Promise[A])(f: (A, E) => Promise[A]): Iteratee[E, A] = {
+    flatten(state.map(s => fold1(s)(f)))
   }
 
   def consume[E] = new {
@@ -53,6 +79,9 @@ object Iteratee {
     }
   }
 
+  /**
+   * @return an [[play.api.libs.iteratee.Iteratee]] which just ignores its input
+   */
   def ignore[E]: Iteratee[E, Unit] = fold[E, Unit](())((_, _) => ())
 
   def mapChunk_[E](f: E => Unit): Iteratee[E, Unit] = fold[E, Unit](())((_, e) => f(e))
@@ -81,7 +110,7 @@ object Iteratee {
 
 }
 
-trait Input[+E] {
+sealed trait Input[+E] {
   def map[U](f: (E => U)): Input[U] = this match {
     case Input.El(e) => Input.El(f(e))
     case Input.Empty => Input.Empty
@@ -97,8 +126,13 @@ object Input {
 
 }
 
+/**
+ * @tparam E Input type
+ * @tparam A Result type of this Iteratee
+ */
 trait Iteratee[E, +A] {
   self =>
+
   def run[AA >: A]: Promise[AA] = fold((a, _) => Promise.pure(a),
     k => k(Input.EOF).fold((a1, _) => Promise.pure(a1),
       _ => sys.error("diverging iteratee after Input.EOF"),
@@ -165,6 +199,11 @@ trait Iteratee[E, +A] {
 }
 
 object Done {
+  /**
+   * Create an [[play.api.libs.iteratee.Iteratee]] in the “done” state.
+   * @param a Result
+   * @param e Remaining unused input
+   */
   def apply[E, A](a: A, e: Input[E]): Iteratee[E, A] = new Iteratee[E, A] {
     def fold[B](done: (A, Input[E]) => Promise[B],
       cont: (Input[E] => Iteratee[E, A]) => Promise[B],
@@ -175,6 +214,10 @@ object Done {
 }
 
 object Cont {
+  /**
+   * Create an [[play.api.libs.iteratee.Iteratee]] in the “cont” state.
+   * @param k Continuation which will compute the next Iteratee state according to an input
+   */
   def apply[E, A](k: Input[E] => Iteratee[E, A]): Iteratee[E, A] = new Iteratee[E, A] {
     def fold[B](done: (A, Input[E]) => Promise[B],
       cont: (Input[E] => Iteratee[E, A]) => Promise[B],
@@ -183,6 +226,11 @@ object Cont {
   }
 }
 object Error {
+  /**
+   * Create an [[play.api.libs.iteratee.Iteratee]] in the “error” state.
+   * @param msg Error message
+   * @param e The input that caused the error
+   */
   def apply[E](msg: String, e: Input[E]): Iteratee[E, Nothing] = new Iteratee[E, Nothing] {
     def fold[B](done: (Nothing, Input[E]) => Promise[B],
       cont: (Input[E] => Iteratee[E, Nothing]) => Promise[B],
@@ -191,16 +239,33 @@ object Error {
   }
 }
 
+/**
+ * Pushes input to an [[play.api.libs.iteratee.Iteratee]]
+ * @type E Type of the input
+ */
 trait Enumerator[E] {
   parent =>
 
+  /**
+   * Apply this Enumerator to an Iteratee
+   */
   def apply[A](i: Iteratee[E, A]): Promise[Iteratee[E, A]]
+
+  /**
+   * Alias for `apply`
+   */
   def |>>[A](i: Iteratee[E, A]): Promise[Iteratee[E, A]] = apply(i)
 
+  /**
+   * Sequentially combine this Enumerator with another Enumerator
+   */
   def andThen(e: Enumerator[E]): Enumerator[E] = new Enumerator[E] {
     def apply[A](i: Iteratee[E, A]): Promise[Iteratee[E, A]] = parent.apply(i).flatMap(e.apply) //bad implementation, should remove Input.EOF in the end of first
   }
 
+  /**
+   * Compose this Enumerator with an Enumeratee
+   */
   def &>[To](enumeratee: Enumeratee[E, To]): Enumerator[To] = new Enumerator[To] {
 
     def apply[A](i: Iteratee[To, A]): Promise[Iteratee[To, A]] = {
@@ -212,27 +277,45 @@ trait Enumerator[E] {
 
   }
 
+  /**
+   * Alias for `andThen`
+   */
   def >>>(e: Enumerator[E]): Enumerator[E] = andThen(e)
 
-  def map[U](f: E => U) = parent &> Enumeratee.map[E](f)
+  def map[U](f: E => U): Enumerator[U] = parent &> Enumeratee.map[E](f)
 
   def mapInput[U](f: Input[E] => Input[U]) = parent &> Enumeratee.mapInput[E](f)
 
 }
 
+/**
+ * Combines the roles of an Iteratee[From] and a Enumerator[To]
+ */
 trait Enumeratee[From, To] {
   parent =>
 
   def applyOn[A](inner: Iteratee[To, A]): Iteratee[From, Iteratee[To, A]]
 
+  /**
+   * Alias for `applyOn`
+   */
   def apply[A](inner: Iteratee[To, A]): Iteratee[From, Iteratee[To, A]] = applyOn[A](inner)
 
   def transform[A](inner: Iteratee[To, A]): Iteratee[From, A] = apply(inner).joinI
 
+  /**
+   * Alias for `transform`
+   */
   def &>>[A](inner: Iteratee[To, A]): Iteratee[From, A] = transform(inner)
 
+  /**
+   * Alias for `apply`
+   */
   def &>[A](inner: Iteratee[To, A]): Iteratee[From, Iteratee[To, A]] = apply(inner)
 
+  /**
+   * Compose this Enumerator with another Enumerator
+   */
   def ><>[To2](other: Enumeratee[To, To2]): Enumeratee[From, To2] = {
     new Enumeratee[From, To2] {
       def applyOn[A](iteratee: Iteratee[To2, A]): Iteratee[From, Iteratee[To2, A]] = {
@@ -312,7 +395,7 @@ object Enumeratee {
     def apply[To](f: Input[From] => Input[To]) = new CheckDone[From, To] {
 
       def step[A](k: K[To, A]): K[From, Iteratee[To, A]] = {
-        case in @ Input.El(_) =>
+        case in @ (Input.El(_) | Input.Empty) =>
           new CheckDone[From, To] { def continue[A](k: K[To, A]) = Cont(step(k)) } &> k(f(in))
 
         case Input.EOF => Done(k(Input.EOF), Input.EOF)
@@ -322,6 +405,9 @@ object Enumeratee {
     }
   }
 
+  /**
+   * Create an Enumeratee which transforms its input using a given function
+   */
   def map[E] = new {
     def apply[NE](f: E => NE): Enumeratee[E, NE] = mapInput[E](in => in.map(f))
   }
@@ -333,9 +419,12 @@ object Enumeratee {
       case in @ Input.El(_) if remaining > 0 =>
         new CheckDone[E, E] { def continue[A](k: K[E, A]) = Cont(step(remaining - 1)(k)) } &> k(in)
 
-      case in if remaining <= 0 => Done(Cont(k), in)
+      case in @ Input.Empty if remaining > 0 =>
+        new CheckDone[E, E] { def continue[A](k: K[E, A]) = Cont(step(remaining)(k)) } &> k(in)
 
       case Input.EOF => Done(k(Input.EOF), Input.EOF)
+
+      case in => Done(Cont(k), in)
     }
 
     def continue[A](k: K[E, A]) = Cont(step(count)(k))
@@ -352,7 +441,7 @@ object Enumeratee {
 
           case Input.El(e) if counter > 0 => Cont(step(counter - 1, inner))
 
-          case Input.El(e) if counter <= 0 => inner.pureFlatFold(
+          case Input.El(e) => inner.pureFlatFold(
             (_, _) => Done(inner, in),
             k => Cont(step(0, k(in))),
             (_, _) => Done(inner, in))
@@ -436,19 +525,81 @@ object Enumerator {
 
   }
 
+  import scalax.io.JavaConverters._
+
+  def enumerateStream(input: java.io.InputStream, chunkSize: Int = 1024 * 8) = new Enumerator[Array[Byte]] {
+    def apply[A](it: Iteratee[Array[Byte], A]): Promise[Iteratee[Array[Byte], A]] = {
+
+      var iteratee: Iteratee[Array[Byte], A] = it
+      var iterateeP: Promise[Iteratee[Array[Byte], A]] = null
+
+      while (iterateeP == null) {
+        iteratee = iteratee.pureFlatFold(
+
+          // Done
+          (_, _) => {
+            iterateeP = Promise.pure(iteratee)
+            iteratee
+          },
+
+          // CONTINUE
+          k => {
+            val buffer = new Array[Byte](chunkSize)
+            input.read(buffer) match {
+              case -1 => {
+                val remainingIteratee = k(Input.EOF)
+                iterateeP = Promise.pure(remainingIteratee)
+                remainingIteratee
+              }
+              case read => {
+                val input = new Array[Byte](read)
+                System.arraycopy(buffer, 0, input, 0, read)
+                val nextIteratee = k(Input.El(input))
+                nextIteratee
+              }
+            }
+          },
+
+          // ERROR
+          (_, _) => {
+            iterateeP = Promise.pure(iteratee)
+            iteratee
+          }
+
+        )
+      }
+
+      input.close()
+
+      iterateeP
+    }
+  }
+
+  def enumerateFile(file: java.io.File, chunkSize: Int = 1024 * 8): Enumerator[Array[Byte]] = enumerateStream(new java.io.FileInputStream(file), chunkSize)
+
   def empty[A] = enumInput[A](Input.EOF)
 
+  /**
+   * Create an Enumerator from a set of values
+   *
+   * Example:
+   * {{{
+   *   val enumerator: Enumerator[String] = Enumerator("kiki", "foo", "bar")
+   * }}}
+   */
   def apply[E](in: E*): Enumerator[E] = new Enumerator[E] {
 
     def apply[A](i: Iteratee[E, A]): Promise[Iteratee[E, A]] = enumerate(in, i)
 
   }
+
   def enumerate[E, A]: (Seq[E], Iteratee[E, A]) => Promise[Iteratee[E, A]] = { (l, i) =>
     l.foldLeft(Promise.pure(i))((i, e) =>
       i.flatMap(_.fold((_, _) => i,
         k => Promise.pure(k(Input.El(e))),
         (_, _) => i)))
   }
+
 }
 
 class CallbackEnumerator[E](

@@ -66,6 +66,7 @@ trait Status {
   val UNSUPPORTED_MEDIA_TYPE = 415
   val REQUESTED_RANGE_NOT_SATISFIABLE = 416
   val EXPECTATION_FAILED = 417
+  val TOO_MANY_REQUEST = 429
 
   val INTERNAL_SERVER_ERROR = 500
   val NOT_IMPLEMENTED = 501
@@ -93,6 +94,7 @@ trait HeaderNames {
 
   val CACHE_CONTROL = "Cache-Control"
   val CONNECTION = "Connection"
+  val CONTENT_DISPOSITION = "Content-Disposition"
   val CONTENT_ENCODING = "Content-Encoding"
   val CONTENT_LANGUAGE = "Content-Language"
   val CONTENT_LENGTH = "Content-Length"

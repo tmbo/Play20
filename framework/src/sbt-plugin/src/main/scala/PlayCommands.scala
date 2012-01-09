@@ -1,7 +1,7 @@
 package sbt
 
 import Keys._
-import CommandSupport.{ClearOnFailure,FailureWall}
+import CommandSupport.{ ClearOnFailure, FailureWall }
 
 import play.api._
 import play.core._
@@ -15,6 +15,14 @@ import scala.annotation.tailrec
 
 trait PlayCommands {
   this: PlayReloader =>
+
+  //- mainly scala, mainly java or none
+
+  val JAVA = "java"
+  val SCALA = "scala"
+  val NONE = "none"
+
+  // ----- Create a Play project with default settings
 
   private[sbt] lazy val testListener = new PlayTestListener
 
@@ -79,17 +87,32 @@ trait PlayCommands {
     inAllDependencies(r, (packageBin in Compile).task, Project structure s).join
   }
 
-  val playCopyResources = TaskKey[Seq[(File, File)]]("play-copy-resources")
-  val playCopyResourcesTask = (baseDirectory, managedResources in Compile, resourceManaged in Compile, playAssetsDirectories, classDirectory in Compile, cacheDirectory, streams) map { (b, resources, resourcesDirectories, r, t, c, s) =>
-    val cacheFile = c / "copy-resources"
+  val playCopyAssets = TaskKey[Seq[(File, File)]]("play-copy-assets")
+  val playCopyAssetsTask = (baseDirectory, managedResources in Compile, resourceManaged in Compile, playAssetsDirectories, classDirectory in Compile, cacheDirectory, streams) map { (b, resources, resourcesDirectories, r, t, c, s) =>
+    val cacheFile = c / "copy-assets"
     val mappings = (r.map(_ ***).reduceLeft(_ +++ _) x rebase(b, t)) ++ (resources x rebase(resourcesDirectories, t))
+
+    val toZip = mappings.collect { case (resource, _) if resource.isFile && !resource.getName.endsWith(".gz") => resource } x relativeTo(Seq(b, resourcesDirectories))
+
+    val gzipped = toZip.map {
+      case (resource, path) => {
+        s.log.debug("Gzipping " + resource)
+        val zipFile = new File(resourcesDirectories, path + ".gz")
+        IO.gzip(resource, zipFile)
+        zipFile -> new File(t, path + ".gz")
+      }
+    }
+
+    val assetsMapping = mappings ++ gzipped
+
     s.log.debug("Copy play resource mappings: " + mappings.mkString("\n\t", "\n\t", ""))
-    Sync(cacheFile)(mappings)
-    mappings
+
+    Sync(cacheFile)(assetsMapping)
+    assetsMapping
   }
 
   val playReload = TaskKey[sbt.inc.Analysis]("play-reload")
-  val playReloadTask = (playCopyResources, playCompileEverything) map { (_, analysises) =>
+  val playReloadTask = (playCopyAssets, playCompileEverything) map { (_, analysises) =>
     analysises.reduceLeft(_ ++ _)
   }
 
@@ -128,6 +151,29 @@ trait PlayCommands {
     println()
 
     zip
+  }
+
+  /**
+   * provides Settings for the eclipse project
+   * @param mainLang mainly scala or java?
+   */
+  def eclipseCommandSettings(mainLang: String) = {
+    import com.typesafe.sbteclipse.core._
+    import com.typesafe.sbteclipse.core.EclipsePlugin._
+    def transformerFactory =
+      if (mainLang == SCALA)
+        EclipseClasspathEntryTransformerFactory.Default
+      else
+        new EclipseClasspathEntryTransformerFactory {
+          override def createTransformer(ref: ProjectRef, state: State) =
+            setting(crossTarget in ref)(state) map (ct =>
+              (entries: Seq[EclipseClasspathEntry]) => entries :+ EclipseClasspathEntry.Lib(ct + "/classes_managed")
+            )
+        }
+    EclipsePlugin.eclipseSettings ++ Seq(EclipseKeys.commandName := "eclipsify",
+      EclipseKeys.createSrc := EclipseCreateSrc.Default + EclipseCreateSrc.Managed,
+      EclipseKeys.preTasks := Seq(compile in Compile),
+      EclipseKeys.classpathEntryTransformerFactory := transformerFactory)
   }
 
   val playIntellij = TaskKey[Unit]("idea")
@@ -248,7 +294,14 @@ trait PlayCommands {
 
   // ----- Assets
 
-  def AssetsCompiler(name: String, files: (File) => PathFinder, naming: (String) => String, compile: (File, Boolean) => (String, Seq[File])) =
+  // Name: name of the compiler
+  // files: the function to find files to compile from the assets directory
+  // naming: how to name the generated file from the original file and whether it should be minified or not
+  // compile: compile the file and return the compiled sources, the minified source (if relevant) and the list of dependencies
+  def AssetsCompiler(name: String,
+    files: (File) => PathFinder,
+    naming: (String, Boolean) => String,
+    compile: (File) => (String, Option[String], Seq[File])) =
     (sourceDirectory in Compile, resourceManaged in Compile, cacheDirectory, minify) map { (src, resources, cache, min) =>
 
       import java.io._
@@ -263,13 +316,16 @@ trait PlayCommands {
         // Delete previous generated files
         previousRelation._2s.foreach(IO.delete)
 
-        val generated = ((sourceFiles --- ((src / "assets") ** "_*")) x relativeTo(Seq(src / "assets"))).map {
-          case (sourceFile, name) => sourceFile -> ("public/" + naming(name))
-        }.flatMap {
+        val generated = ((sourceFiles --- ((src / "assets") ** "_*")) x relativeTo(Seq(src / "assets"))).flatMap {
           case (sourceFile, name) => {
-            val ((css, dependencies), out) = compile(sourceFile, min) -> new File(resources, name)
-            IO.write(out, css)
-            dependencies.map(_ -> out)
+            val (debug, min, dependencies) = compile(sourceFile)
+            val out = new File(resources, "public/" + naming(name, false))
+            val outMin = new File(resources, "public/" + naming(name, true))
+            IO.write(out, debug)
+            dependencies.map(_ -> out) ++ min.map { minified =>
+              IO.write(outMin, minified)
+              dependencies.map(_ -> outMin)
+            }.getOrElse(Nil)
           }
         }
 
@@ -291,21 +347,29 @@ trait PlayCommands {
 
   val LessCompiler = AssetsCompiler("less",
     { assets => (assets ** "*.less") },
-    { name => name.replace(".less", ".css") },
-    { (lessFile, minify) => play.core.less.LessCompiler.compile(lessFile, minify) })
+    { (name, min) => name.replace(".less", if (min) ".min.css" else ".css") },
+    { lessFile => play.core.less.LessCompiler.compile(lessFile) }
+  )
 
   val JavascriptCompiler = AssetsCompiler("javascripts",
     { assets => (assets ** "*.js") },
-    identity,
-    { (jsFile, minify) =>
-      val (fullSource, minified, dependencies) = play.core.jscompile.JavascriptCompiler.compile(jsFile)
-      (if (minify) minified else fullSource, dependencies)
-    })
+    { (name, min) => name.replace(".js", if (min) ".min.js" else ".js") },
+    { jsFile => play.core.jscompile.JavascriptCompiler.compile(jsFile) }
+  )
 
   val CoffeescriptCompiler = AssetsCompiler("coffeescript",
     { assets => (assets ** "*.coffee") },
-    { name => name.replace(".coffee", ".js") },
-    { (coffeeFile, minify) => (play.core.coffeescript.CoffeescriptCompiler.compile(coffeeFile), Seq(coffeeFile)) })
+    { (name, min) => name.replace(".coffee", if (min) ".min.js" else ".js") },
+    { coffeeFile =>
+      import scala.util.control.Exception._
+      val jsSource = play.core.coffeescript.CoffeescriptCompiler.compile(coffeeFile)
+      // Any error here would be because of CoffeeScript, not the developer;
+      // so we don't want compilation to fail.
+      val minified = catching(classOf[CompilationException])
+        .opt(play.core.jscompile.JavascriptCompiler.minify(jsSource, Some(coffeeFile.getName())))
+      (jsSource, minified, Seq(coffeeFile))
+    }
+  )
 
   // ----- Post compile (need to be refactored and fully configurable)
 
@@ -426,8 +490,8 @@ trait PlayCommands {
   }
 
   // ----- Play commands
-  
-  private def filterArgs(args: Seq[String]): (Seq[(String,String)], Int) = {
+
+  private def filterArgs(args: Seq[String]): (Seq[(String, String)], Int) = {
     val (properties, others) = args.span(_.startsWith("-D"))
     val javaProperties = properties.map(_.drop(2).split('=')).map(a => a(0) -> a(1))
     val port = others.headOption.map { portString =>
@@ -444,7 +508,7 @@ trait PlayCommands {
 
     // Parse HTTP port argument
     val (properties, port) = filterArgs(args)
-    
+
     // Set Java properties
     properties.foreach {
       case (key, value) => System.setProperty(key, value)
@@ -488,28 +552,28 @@ trait PlayCommands {
             }
           }
         }
-        
+
         // -- Delegate resource loading. We have to hack here because the default implementation are already recursives.
-        
+
         override def getResource(name: String): java.net.URL = {
           val findResource = classOf[ClassLoader].getDeclaredMethod("findResource", classOf[String])
           findResource.setAccessible(true)
           val resource = reloader.currentApplicationClassLoader.map(findResource.invoke(_, name).asInstanceOf[java.net.URL]).orNull
-          if(resource == null) {
+          if (resource == null) {
             super.getResource(name)
           } else {
             resource
           }
-        } 
-        
+        }
+
         override def getResources(name: String): java.util.Enumeration[java.net.URL] = {
           val findResources = classOf[ClassLoader].getDeclaredMethod("findResources", classOf[String])
           findResources.setAccessible(true)
           val resources1 = reloader.currentApplicationClassLoader.map(findResources.invoke(_, name).asInstanceOf[java.util.Enumeration[java.net.URL]]).getOrElse(new java.util.Vector[java.net.URL]().elements)
           val resources2 = super.getResources(name)
           val resources = new java.util.Vector[java.net.URL]
-          while(resources1.hasMoreElements) resources.add(resources1.nextElement)
-          while(resources2.hasMoreElements) resources.add(resources2.nextElement)
+          while (resources1.hasMoreElements) resources.add(resources1.nextElement)
+          while (resources2.hasMoreElements) resources.add(resources2.nextElement)
           resources.elements
         }
 
@@ -534,8 +598,7 @@ trait PlayCommands {
       val ContinuousState = AttributeKey[WatchState]("watch state", "Internal: tracks state for continuous execution.")
       def isEOF(c: Int): Boolean = c == 4
 
-      @tailrec def executeContinuously(watched: Watched, s: State, reloader: SBTLink, ws:
-      Option[WatchState] = None): Option[String] = {
+      @tailrec def executeContinuously(watched: Watched, s: State, reloader: SBTLink, ws: Option[WatchState] = None): Option[String] = {
         @tailrec def shouldTerminate: Boolean = (System.in.available > 0) && (isEOF(System.in.read()) || shouldTerminate)
 
         val sourcesFinder = PathFinder { watched watchPaths s }
@@ -545,19 +608,26 @@ trait PlayCommands {
           try {
             val (triggered, newWatchState) = SourceModificationWatch.watch(sourcesFinder, watched.pollInterval, watchState)(shouldTerminate)
             (triggered, newWatchState, s)
-          }
-          catch { case e: Exception =>
-            val log = s.log
-            log.error("Error occurred obtaining files to watch.  Terminating continuous execution...")
-            BuiltinCommands.handleException(e, s, log)
-            (false, watchState, s.fail)
+          } catch {
+            case e: Exception =>
+              val log = s.log
+              log.error("Error occurred obtaining files to watch.  Terminating continuous execution...")
+              BuiltinCommands.handleException(e, s, log)
+              (false, watchState, s.fail)
           }
 
-
-        if(triggered) {
+        if (triggered) {
           //Then launch compile
-          PlayProject.synchronized{
-            Project.evaluateTask(compile in Compile, newState)
+          PlayProject.synchronized {
+            val start = System.currentTimeMillis
+            Project.evaluateTask(compile in Compile, newState).get.toEither.right.map { _ =>
+              val duration = System.currentTimeMillis - start
+              val formatted = duration match {
+                case ms if ms < 1000 => ms + "ms"
+                case s => (s / 1000) + "s"
+              }
+              println("[" + Colors.green("success") + "] Compiled in " + formatted)
+            }
           }
 
           // Avoid launching too much compilation
@@ -565,8 +635,7 @@ trait PlayCommands {
 
           // Call back myself
           executeContinuously(watched, newState, reloader, Some(newWatchState))
-        }
-        else {
+        } else {
           // Stop 
           Some("Okay, i'm done")
         }
@@ -575,14 +644,14 @@ trait PlayCommands {
       // If we have both Watched.Configuration and Watched.ContinuousState
       // attributes and if Watched.ContinuousState.count is 1 then we assume
       // we're in ~ run mode
-      val maybeContinuous = state.get(Watched.Configuration).map{ w =>
-        state.get(Watched.ContinuousState).map { ws => 
+      val maybeContinuous = state.get(Watched.Configuration).map { w =>
+        state.get(Watched.ContinuousState).map { ws =>
           (ws.count == 1, w, ws)
         }.getOrElse((false, None, None))
       }.getOrElse((false, None, None))
 
       val newState = maybeContinuous match {
-        case (true, w:sbt.Watched, ws) => {
+        case (true, w: sbt.Watched, ws) => {
           // ~ run mode
           consoleReader.getTerminal.disableEcho()
           executeContinuously(w, state, reloader)
@@ -591,7 +660,7 @@ trait PlayCommands {
           // Remove state two first commands added by sbt ~
           state.copy(remainingCommands = state.remainingCommands.drop(2)).remove(Watched.ContinuousState)
         }
-        case _ => { 
+        case _ => {
           // run mode
           waitForKey()
           state
@@ -602,7 +671,7 @@ trait PlayCommands {
 
       newState
     }
-    
+
     // Remove Java properties
     properties.foreach {
       case (key, _) => System.clearProperty(key)
@@ -615,8 +684,6 @@ trait PlayCommands {
       case _ => state
     }
   }
-
-
 
   val playStartCommand = Command.args("start", "<port>") { (state: State, args: Seq[String]) =>
 
@@ -640,7 +707,7 @@ trait PlayCommands {
 
           import java.lang.{ ProcessBuilder => JProcessBuilder }
           val builder = new JProcessBuilder(Seq(
-            "java") ++ properties.map {case (key,value) => "-D" + key + "=" + value} ++ Seq("-Dhttp.port=" + port, "-cp", classpath, "play.core.server.NettyServer", extracted.currentProject.base.getCanonicalPath): _*)
+            "java") ++ properties.map { case (key, value) => "-D" + key + "=" + value } ++ Seq("-Dhttp.port=" + port, "-cp", classpath, "play.core.server.NettyServer", extracted.currentProject.base.getCanonicalPath): _*)
 
           new Thread {
             override def run {

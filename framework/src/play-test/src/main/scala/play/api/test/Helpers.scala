@@ -77,13 +77,16 @@ object Helpers extends Status with HeaderNames {
     case Result(status, _) => status
     case r => sys.error("Cannot extract the status from a result of type " + r.getClass.getName)
   }
-  
+
   def cookies(of: Result): Cookies = Cookies(header(SET_COOKIE, of))
-  
+
   def flash(of: Result): Flash = Flash.decodeFromCookie(cookies(of).get(Flash.COOKIE_NAME))
-  
+
   def redirectLocation(of: Result): Option[String] = of match {
     case Result(FOUND, headers) => headers.get(LOCATION)
+    case Result(SEE_OTHER, headers) => headers.get(LOCATION)
+    case Result(TEMPORARY_REDIRECT, headers) => headers.get(LOCATION)
+    case Result(MOVED_PERMANENTLY, headers) => headers.get(LOCATION)
     case Result(_, _) => None
     case r => sys.error("Cannot extract the headers from a result of type " + r.getClass.getName)
   }
@@ -116,5 +119,5 @@ object Helpers extends Status with HeaderNames {
       ("db." + name + ".url") -> ("jdbc:h2:mem:play-test-" + scala.util.Random.nextInt)
     )
   }
-  
+
 }

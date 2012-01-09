@@ -76,7 +76,7 @@ object PlayBuild extends Build {
       settings = buildSettings ++ Seq(
         sbtPlugin := true,
         libraryDependencies := sbtDependencies,
-        addSbtPlugin("com.typesafe.sbteclipse" % "sbteclipse-core" % "2.0.0-M2"), 
+        addSbtPlugin("com.typesafe.sbteclipse" % "sbteclipse-core" % "2.0.0-M3"),
         unmanagedJars in Compile  ++=  sbtJars,
         publishMavenStyle := false,
         publishTo := Some(playRepository),
@@ -133,8 +133,7 @@ object PlayBuild extends Build {
         val buildSettings = Defaults.defaultSettings ++ Seq (
             organization   := buildOrganization,
             version        := buildVersion,
-            scalaVersion   := buildScalaVersion,
-            ivyLoggingLevel := UpdateLogging.Quiet
+            scalaVersion   := buildScalaVersion
         )
 
     }
@@ -169,8 +168,8 @@ object PlayBuild extends Build {
             "ch.qos.logback"                    %    "logback-core"             %   "0.9.30",
             "ch.qos.logback"                    %    "logback-classic"          %   "0.9.30",
             "com.github.scala-incubator.io"     %%   "scala-io-file"            %   "0.2.0",
-            "se.scalablesolutions.akka"         %    "akka-actor"               %   "1.3-RC2",
-            "se.scalablesolutions.akka"         %    "akka-slf4j"               %   "1.3-RC2",
+            "com.typesafe.akka"                 %    "akka-actor"               %   "2.0-M2",
+            "com.typesafe.akka"                 %    "akka-slf4j"               %   "2.0-M2",
             "com.typesafe.config"               %%   "config"                   %   "0.1.6",
             "org.avaje"                         %    "ebean"                    %   "2.7.3" notTransitive(),
             "org.hibernate.javax.persistence"   %    "hibernate-jpa-2.0-api"    %   "1.0.1.Final",
@@ -179,9 +178,9 @@ object PlayBuild extends Build {
             "com.jolbox"                        %    "bonecp"                   %   "0.7.1.RELEASE",
             "org.yaml"                          %    "snakeyaml"                %   "1.9",
             "org.hibernate"                     %    "hibernate-validator"      %   "4.2.0.Final",
-            "org.springframework"               %    "spring-context"           %   "3.0.6.RELEASE"   notTransitive(),
-            "org.springframework"               %    "spring-core"              %   "3.0.6.RELEASE"   notTransitive(),
-            "org.springframework"               %    "spring-beans"             %   "3.0.6.RELEASE"   notTransitive(),
+            "org.springframework"               %    "spring-context"           %   "3.0.7.RELEASE"   notTransitive(),
+            "org.springframework"               %    "spring-core"              %   "3.0.7.RELEASE"   notTransitive(),
+            "org.springframework"               %    "spring-beans"             %   "3.0.7.RELEASE"   notTransitive(),
             "joda-time"                         %    "joda-time"                %   "2.0",
             "mysql"                             %    "mysql-connector-java"     %   "5.1.17",
             "javassist"                         %    "javassist"                %   "3.12.1.GA",
