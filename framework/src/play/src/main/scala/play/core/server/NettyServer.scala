@@ -140,18 +140,20 @@ object NettyServer {
 
   def mainDev(sbtLink: SBTLink, port: Int): NettyServer = {
     // Manage RUNNING_PID file
-    java.lang.management.ManagementFactory.getRuntimeMXBean.getName.split('@').headOption.map { pid =>
-      val pidFile = new File(applicationPath, "RUNNING_PID")
+    Option(System.getProperty("user.dir")).map(new File(_)).filter(p => p.exists && p.isDirectory).map { applicationPath =>
+      java.lang.management.ManagementFactory.getRuntimeMXBean.getName.split('@').headOption.map { pid =>
+        val pidFile = new File(applicationPath, "RUNNING_PID")
 
-      // The Logger is not initialized yet, we print the Process ID on STDOUT
-      println("Play server process ID is " + pid)
+        // The Logger is not initialized yet, we print the Process ID on STDOUT
+        println("Play server process ID is " + pid)
 
-      new FileOutputStream(pidFile).write(pid.getBytes)
-      Runtime.getRuntime.addShutdownHook(new Thread {
-        override def run {
-          pidFile.delete()
-        }
-      })
+        new FileOutputStream(pidFile).write(pid.getBytes)
+        Runtime.getRuntime.addShutdownHook(new Thread {
+          override def run {
+            pidFile.delete()
+          }
+        })
+      }
     }
 
     play.utils.Threads.withContextClassLoader(this.getClass.getClassLoader) {
