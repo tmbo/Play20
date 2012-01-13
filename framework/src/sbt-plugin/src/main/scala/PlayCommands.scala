@@ -303,8 +303,8 @@ trait PlayCommands {
   def AssetsCompiler(name: String,
     files: (File) => PathFinder,
     naming: (String, Boolean) => String,
-    compile: (File) => (String, Option[String], Seq[File])) =
-    (sourceDirectory in Compile, resourceManaged in Compile, cacheDirectory, minify) map { (src, resources, cache, min) =>
+    compile: (File,Boolean) => (String, Option[String], Seq[File])) =
+    (sourceDirectory in Compile, resourceManaged in Compile, cacheDirectory, minify) map { (src, resources, cache, mininfy) =>
 
       import java.io._
 
@@ -312,15 +312,16 @@ trait PlayCommands {
       val sourceFiles = files(src / "assets")
       val currentInfos = sourceFiles.get.map(f => f -> FileInfo.lastModified(f)).toMap
       val (previousRelation, previousInfo) = Sync.readInfo(cacheFile)(FileInfo.lastModified.format)
-
+      
       if (previousInfo != currentInfos) {
-
+      
         // Delete previous generated files
         previousRelation._2s.foreach(IO.delete)
 
-        val generated = ((sourceFiles --- ((src / "assets") ** "_*")) x relativeTo(Seq(src / "assets"))).flatMap {
+        val t = System.currentTimeMillis()
+        val generated = ((sourceFiles --- ((src / "assets") ** "_*")) x relativeTo(Seq(src / "assets"))).par.flatMap {
           case (sourceFile, name) => {
-            val (debug, min, dependencies) = compile(sourceFile)
+            val (debug, min, dependencies) = compile(sourceFile, mininfy)
             val out = new File(resources, "public/" + naming(name, false))
             val outMin = new File(resources, "public/" + naming(name, true))
             IO.write(out, debug)
@@ -329,8 +330,8 @@ trait PlayCommands {
               dependencies.map(_ -> outMin)
             }.getOrElse(Nil)
           }
-        }
-
+        }.seq
+        println("Finished %s: %dms".format(name,System.currentTimeMillis-t))
         Sync.writeInfo(cacheFile,
           Relation.empty[File, File] ++ generated,
           currentInfos)(FileInfo.lastModified.format)
@@ -350,25 +351,29 @@ trait PlayCommands {
   val LessCompiler = AssetsCompiler("less",
     { assets => (assets ** "*.less") },
     { (name, min) => name.replace(".less", if (min) ".min.css" else ".css") },
-    { lessFile => play.core.less.LessCompiler.compile(lessFile) }
+    { (lessFile, min) => play.core.less.LessCompiler.compile(lessFile) }
   )
 
   val JavascriptCompiler = AssetsCompiler("javascripts",
     { assets => (assets ** "*.js") },
     { (name, min) => name.replace(".js", if (min) ".min.js" else ".js") },
-    { jsFile => play.core.jscompile.JavascriptCompiler.compile(jsFile) }
+    { (jsFile, min) => play.core.jscompile.JavascriptCompiler.compile(jsFile) }
   )
 
   val CoffeescriptCompiler = AssetsCompiler("coffeescript",
     { assets => (assets ** "*.coffee") },
     { (name, min) => name.replace(".coffee", if (min) ".min.js" else ".js") },
-    { coffeeFile =>
+    { (coffeeFile, min) =>
       import scala.util.control.Exception._
       val jsSource = play.core.coffeescript.CoffeescriptCompiler.compile(coffeeFile)
       // Any error here would be because of CoffeeScript, not the developer;
       // so we don't want compilation to fail.
-      val minified = catching(classOf[CompilationException])
-        .opt(play.core.jscompile.JavascriptCompiler.minify(jsSource, Some(coffeeFile.getName())))
+      val minified = 
+      	if(min)
+    	  catching(classOf[CompilationException])
+    	  	.opt(play.core.jscompile.JavascriptCompiler.minify(jsSource, Some(coffeeFile.getName())))
+    	else
+    	  None
       (jsSource, minified, Seq(coffeeFile))
     }
   )
