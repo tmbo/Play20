@@ -1,5 +1,6 @@
 package sbt
 
+import scala.collection.parallel.CompositeThrowable
 import Keys._
 import CommandSupport.{ ClearOnFailure, FailureWall }
 
@@ -304,7 +305,7 @@ trait PlayCommands {
     files: (File) => PathFinder,
     naming: (String, Boolean) => String,
     compile: (File,Boolean) => (String, Option[String], Seq[File])) =
-    (sourceDirectory in Compile, resourceManaged in Compile, cacheDirectory, minify) map { (src, resources, cache, mininfy) =>
+    (sourceDirectory in Compile, resourceManaged in Compile, cacheDirectory, minify, streams) map { (src, resources, cache, mininfy, s) =>
 
       import java.io._
 
@@ -319,26 +320,30 @@ trait PlayCommands {
         previousRelation._2s.foreach(IO.delete)
 
         val t = System.currentTimeMillis()
-        val generated = ((sourceFiles --- ((src / "assets") ** "_*")) x relativeTo(Seq(src / "assets"))).par.flatMap {
-          case (sourceFile, name) => {
-            val (debug, min, dependencies) = compile(sourceFile, mininfy)
-            val out = new File(resources, "public/" + naming(name, false))
-            val outMin = new File(resources, "public/" + naming(name, true))
-            IO.write(out, debug)
-            dependencies.map(_ -> out) ++ min.map { minified =>
-              IO.write(outMin, minified)
-              dependencies.map(_ -> outMin)
-            }.getOrElse(Nil)
-          }
-        }.seq
-        println("Finished %s: %dms".format(name,System.currentTimeMillis-t))
-        Sync.writeInfo(cacheFile,
-          Relation.empty[File, File] ++ generated,
-          currentInfos)(FileInfo.lastModified.format)
-
-        // Return new files
-        generated.toMap.values.toSeq
-
+        try{
+	        val generated = ((sourceFiles --- ((src / "assets") ** "_*")) x relativeTo(Seq(src / "assets"))).par.flatMap {
+	          case (sourceFile, name) => {
+	            val (debug, min, dependencies) = compile(sourceFile, mininfy)
+	            val out = new File(resources, "public/" + naming(name, false))
+	            val outMin = new File(resources, "public/" + naming(name, true))
+	            IO.write(out, debug)
+	            dependencies.map(_ -> out) ++ min.map { minified =>
+	              IO.write(outMin, minified)
+	              dependencies.map(_ -> outMin)
+	            }.getOrElse(Nil)
+	          }
+	        }.seq
+	        s.log.info("Finished compiling %s sources: %dms".format(name,System.currentTimeMillis-t))
+	        Sync.writeInfo(cacheFile,
+	          Relation.empty[File, File] ++ generated,
+	          currentInfos)(FileInfo.lastModified.format)
+	
+	        // Return new files
+	        generated.toMap.values.toSeq
+        } catch {
+        	case c: CompositeThrowable => 
+        	  throw c.throwables.first
+        }
       } else {
 
         // Return previously generated files
@@ -351,7 +356,11 @@ trait PlayCommands {
   val LessCompiler = AssetsCompiler("less",
     { assets => (assets ** "*.less") },
     { (name, min) => name.replace(".less", if (min) ".min.css" else ".css") },
-    { (lessFile, min) => play.core.less.LessCompiler.compile(lessFile) }
+    { (lessFile, min) => 
+      val cssSource = play.core.less.LessCompiler.compile(lessFile, false) 
+      val minSource = play.core.less.LessCompiler.compile(lessFile, true) 
+      (cssSource,None, Seq(lessFile))
+    }
   )
 
   val JavascriptCompiler = AssetsCompiler("javascripts",
