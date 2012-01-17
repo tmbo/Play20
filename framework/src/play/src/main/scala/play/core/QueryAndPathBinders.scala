@@ -3,6 +3,8 @@ package play.core
 import java.net.{ URLEncoder, URLDecoder }
 import scala.annotation._
 
+import scala.collection.JavaConverters._
+
 @implicitNotFound("No queryString binder found for type ${A}. Try to implement an implicit QueryStringBindable for this type.")
 trait QueryStringBindable[A] {
   def bind(key: String, params: Map[String, Seq[String]]): Option[Either[String, A]]
@@ -90,6 +92,21 @@ object QueryStringBindable {
     def unbind(key: String, value: java.lang.Integer) = key + "=" + value.toString
   }
 
+  implicit def bindableBoolean = new QueryStringBindable[Boolean] {
+    def bind(key: String, params: Map[String, Seq[String]]) = params.get(key).flatMap(_.headOption).map { i =>
+      try {
+        java.lang.Integer.parseInt(i) match {
+          case 0 => Right(false)
+          case 1 => Right(true)
+          case _ => Left("Cannot parse parameter " + key + " as Boolean: should be 0 or 1")
+        }
+      } catch {
+        case e: NumberFormatException => Left("Cannot parse parameter " + key + " as Boolean: should be 0 or 1")
+      }
+    }
+    def unbind(key: String, value: Boolean) = key + "=" + (if (value) "1" else "0")
+  }
+
   implicit def bindableOption[T: QueryStringBindable] = new QueryStringBindable[Option[T]] {
     def bind(key: String, params: Map[String, Seq[String]]) = {
       Some(
@@ -98,6 +115,40 @@ object QueryStringBindable {
           .getOrElse(Right(None)))
     }
     def unbind(key: String, value: Option[T]) = value.map(implicitly[QueryStringBindable[T]].unbind(key, _)).getOrElse("")
+  }
+  
+  implicit def bindableJavaOption[T: QueryStringBindable] = new QueryStringBindable[play.libs.F.Option[T]] {
+    def bind(key: String, params: Map[String, Seq[String]]) = {
+      Some(
+        implicitly[QueryStringBindable[T]].bind(key, params)
+          .map(_.right.map(play.libs.F.Option.Some(_)))
+          .getOrElse(Right(play.libs.F.Option.None.asInstanceOf[play.libs.F.Option[T]])))
+    }
+    def unbind(key: String, value: play.libs.F.Option[T]) = {
+      if(value.isDefined) {
+        implicitly[QueryStringBindable[T]].unbind(key, value.get)
+      } else {
+        ""
+      }
+    }
+  }
+  
+  implicit def javaQueryStringBindable[T <: play.mvc.QueryStringBindable[T]](implicit m: Manifest[T]) = new QueryStringBindable[T] {
+    def bind(key: String, params: Map[String, Seq[String]]) = {
+      try {
+        val o = m.erasure.newInstance.asInstanceOf[T].bind(key, params.mapValues(_.toArray).asJava)
+        if(o.isDefined) {
+          Some(Right(o.get))
+        } else {
+          None
+        }
+      } catch {
+        case e => Some(Left(e.getMessage))
+      }
+    }
+    def unbind(key: String, value: T) = {
+      value.unbind(key)
+    }
   }
 
 }
@@ -142,11 +193,39 @@ object PathBindable {
     def unbind(key: String, value: java.lang.Integer) = value.toString
   }
 
+  implicit def bindableBoolean = new PathBindable[Boolean] {
+    def bind(key: String, value: String) = {
+      try {
+        java.lang.Integer.parseInt(URLDecoder.decode(value, "utf-8")) match {
+          case 0 => Right(false)
+          case 1 => Right(true)
+          case _ => Left("Cannot parse parameter " + key + " as Boolean: should be 0 or 1")
+        }
+      } catch {
+        case e: NumberFormatException => Left("Cannot parse parameter " + key + " as Boolean: should be 0 or 1")
+      }
+    }
+    def unbind(key: String, value: Boolean) = key + "=" + (if (value) "1" else "0")
+  }
+
   implicit def bindableOption[T: PathBindable] = new PathBindable[Option[T]] {
     def bind(key: String, value: String) = {
       implicitly[PathBindable[T]].bind(key, value).right.map(Some(_))
     }
     def unbind(key: String, value: Option[T]) = value.map(v => implicitly[PathBindable[T]].unbind(key, v)).getOrElse("")
+  }
+  
+  implicit def javaPathBindable[T <: play.mvc.PathBindable[T]](implicit m: Manifest[T]) = new PathBindable[T] {
+    def bind(key: String, value: String) = {
+      try {
+        Right(m.erasure.newInstance.asInstanceOf[T].bind(key, value))
+      } catch {
+        case e => Left(e.getMessage)
+      }
+    }
+    def unbind(key: String, value: T) = {
+      value.unbind(key)
+    }
   }
 
 }

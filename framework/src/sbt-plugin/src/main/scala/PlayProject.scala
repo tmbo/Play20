@@ -31,9 +31,9 @@ object PlayProject extends Plugin with PlayExceptions with PlayKeys with PlayRel
       .settings(whichLang(mainLang): _*)
       .settings(
         scalacOptions ++= Seq("-deprecation", "-unchecked", "-Xcheckinit", "-encoding", "utf8"),
+        javacOptions ++= Seq("-encoding", "utf8"),
         version := applicationVersion,
-        libraryDependencies ++= dependencies,
-        ivyLoggingLevel := UpdateLogging.Quiet
+        libraryDependencies ++= dependencies
       )
   }
 }

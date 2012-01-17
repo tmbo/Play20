@@ -63,7 +63,7 @@ public class F {
         }
 
         public void onRedeem(final Callback<A> action) {
-            promise.onRedeem(new Scala.Function1<A,scala.runtime.BoxedUnit>() {
+            promise.onRedeem(new scala.runtime.AbstractFunction1<A,scala.runtime.BoxedUnit>() {
                 public scala.runtime.BoxedUnit apply(A a) {
                     action.invoke(a);
                     return null;
@@ -73,7 +73,7 @@ public class F {
 
         public <B> Promise<B> map(final Function<A,B> f) {
             return new Promise(
-                promise.map(new Scala.Function1<A,B>() {
+                promise.map(new scala.runtime.AbstractFunction1<A,B>() {
                     public B apply(A a) {
                         return f.apply(a);
                     }
@@ -83,7 +83,7 @@ public class F {
 
         public <B> Promise<B> flatMap(final Function<A,Promise<B>> f) {
             return new Promise(
-                promise.flatMap(new Scala.Function1<A,play.api.libs.concurrent.Promise<B>>() {
+                promise.flatMap(new scala.runtime.AbstractFunction1<A,play.api.libs.concurrent.Promise<B>>() {
                     public play.api.libs.concurrent.Promise<B> apply(A a) {
                         return f.apply(a).promise;
                     }
@@ -115,7 +115,7 @@ public class F {
         /**
          * Constructs a <code>None</code> value.
          */
-        public static None None() {
+        public static <T> None<T> None() {
             return (None) new None();
         }
 
@@ -125,6 +125,23 @@ public class F {
         public static <T> Some<T> Some(T value) {
             return new Some<T>(value);
         }
+        
+        public T getOrElse(T defaultValue) {
+            if(isDefined()) {
+                return get();
+            } else {
+                return defaultValue;
+            }
+        }
+        
+        public <A> Option<A> map(Function<T,A> f) {
+            if(isDefined()) {
+                return Some(f.apply(get()));
+            } else {
+                return None();
+            }
+        }
+        
     }
 
     /**
