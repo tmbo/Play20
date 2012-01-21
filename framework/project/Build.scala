@@ -9,7 +9,7 @@ object PlayBuild extends Build {
     import Generators._
     import LocalSBT._
     import Tasks._
-    
+
     val typesafeRepo = "http://repo.typesafe.com/typesafe/releases/"
 
     lazy val TemplatesProject = Project(
@@ -139,7 +139,9 @@ object PlayBuild extends Build {
         val buildSettings = Defaults.defaultSettings ++ Seq (
             organization   := buildOrganization,
             version        := buildVersion,
-            scalaVersion   := buildScalaVersion
+            scalaVersion   := buildScalaVersion,
+            logManager <<= extraLoggers(PlayLogManager.default),
+            ivyLoggingLevel := UpdateLogging.DownloadOnly
         )
 
     }
@@ -191,7 +193,7 @@ object PlayBuild extends Build {
             "mysql"                             %    "mysql-connector-java"     %   "5.1.17",
             "javassist"                         %    "javassist"                %   "3.12.1.GA",
             "commons-lang"                      %    "commons-lang"             %   "2.6",
-            "com.ning"                          %    "async-http-client"        %   "1.6.5",
+            "com.ning"                          %    "async-http-client"        %   "1.7.0",
             "oauth.signpost"                    %    "signpost-core"            %   "1.2.1.1",
             "com.codahale"                      %%   "jerkson"                  %   "0.5.0",
             "org.reflections"                   %    "reflections"              %   "0.9.5",
@@ -201,13 +203,16 @@ object PlayBuild extends Build {
             "com.novocode"                      %    "junit-interface"          %   "0.7"        %  "test"
         )
 
-        val sbtDependencies = Seq(            
+        val sbtDependencies = Seq(      
+          "com.typesafe.config"               %%   "config"                   %   "0.1.6",
+      
           "rhino"                               %    "js"                       %   "1.7R2",
           "com.google.javascript"               %    "closure-compiler"         %   "r1459",           //notTransitive(),
           "com.github.scala-incubator.io"       %%   "scala-io-file"            %   "0.2.0",
           "org.avaje"                           %    "ebean"                    %   "2.7.3",
           "com.h2database"                      %    "h2"                       %   "1.3.158",
           "javassist"                           %    "javassist"                %   "3.12.1.GA"
+
         )
 
         val consoleDependencies = Seq(
@@ -292,11 +297,11 @@ object PlayBuild extends Build {
           IO.delete(file("../documentation/api"))
 
           // Scaladoc
-          val sourceFiles = (file("play/src/main/scala/play/api") ** "*.scala").get ++ (file("play/src/main/scala/views") ** "*.scala").get ++ (file("play/target/scala-2.9.1/src_managed/main/views") ** "*.scala").get
+          val sourceFiles = (file("src/play/src/main/scala/play/api") ** "*.scala").get ++ (file("src/play/src/main/scala/views") ** "*.scala").get ++ (file("play/target/scala-2.9.1/src_managed/main/views") ** "*.scala").get
           new Scaladoc(10, cs.scalac)("Play 2.0 Scala API", sourceFiles, classpath.map(_.data), file("../documentation/api/scala"), Nil, s.log)
 
           // Javadoc
-          val javaSources = file("play/src/main/java")
+          val javaSources = file("src/play/src/main/java")
           val javaApiTarget = file("../documentation/api/java")
           val javaClasspath = classpath.map(_.data).mkString(":")
           """javadoc -windowtitle playframework -doctitle Play&nbsp;2.0&nbsp;Java&nbsp;API  -sourcepath %s -d %s -subpackages play -exclude play.api:play.core -classpath %s""".format(javaSources, javaApiTarget, javaClasspath) ! s.log

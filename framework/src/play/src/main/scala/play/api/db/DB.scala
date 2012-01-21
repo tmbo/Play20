@@ -188,6 +188,7 @@ object DBApi {
     // Bind in JNDI
     conf.getString("jndiName").map { name =>
       JNDI.initialContext.rebind(name, datasource)
+      Logger("play").info("datasource [" + conf.getString("url").get + "] bound to JNDI as " + name)
     }
 
     datasource -> conf
@@ -206,7 +207,7 @@ object DBApi {
 object DB {
 
   /** The exception we are throwing. */
-  private def error = throw new Exception("seems like db plugin is not registered properly, so we can not make calls to it.")
+  private def error = throw new Exception("DB plugin is not registered.")
 
   /**
    * Retrieves a JDBC connection.

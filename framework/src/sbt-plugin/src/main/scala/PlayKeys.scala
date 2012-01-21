@@ -10,6 +10,10 @@ trait PlayKeys {
 
   val templatesImport = SettingKey[Seq[String]]("play-templates-imports")
 
+  val routesImport = SettingKey[Seq[String]]("play-routes-imports")
+
+  val ebeanEnabled = SettingKey[Boolean]("play-ebean-enabled")
+
   val templatesTypes = SettingKey[PartialFunction[String, (String, String)]]("play-templates-formats")
 
   val minify = SettingKey[Boolean]("play-minify", "Whether assets (Javascript and CSS) should be minified or not")

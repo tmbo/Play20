@@ -10,10 +10,7 @@ import scala.collection.JavaConverters._
  */
 object JavaWebSocket extends JavaHelpers {
 
-  /**
-   * @param websocket that's executed in Java Context
-   */
-  def ofString(retrieveWebSocket: => play.mvc.WebSocket[String]) = WebSocket[String] { request =>
+  def webSocketWrapper[A](retrieveWebSocket: => play.mvc.WebSocket[A])(implicit frameFormatter: play.api.mvc.WebSocket.FrameFormatter[A]) = WebSocket[A] { request =>
     (in, out) =>
 
       import play.api.libs.iteratee._
@@ -25,12 +22,26 @@ object JavaWebSocket extends JavaHelpers {
         JContext.current.remove()
       }
 
-      val enumerator = new CallbackEnumerator[String]
+      val enumerator = new PushEnumerator[A]
 
-      val socketOut = new play.mvc.WebSocket.Out[String](enumerator)
-      val socketIn = new play.mvc.WebSocket.In[String]
+      val socketOut = new play.mvc.WebSocket.Out[A] {
 
-      in |>> Iteratee.mapChunk_((msg: String) => socketIn.callbacks.asScala.foreach(_.invoke(msg)))
+        def write(frame: A) {
+          enumerator.push(frame)
+        }
+
+        def close() {
+          enumerator.close()
+        }
+
+      }
+      val socketIn = new play.mvc.WebSocket.In[A]
+
+      in |>> {
+        Iteratee.foreach[A](msg => socketIn.callbacks.asScala.foreach(_.invoke(msg))).mapDone { _ =>
+          socketIn.closeCallbacks.asScala.foreach(_.invoke())
+        }
+      }
 
       enumerator |>> out
 
@@ -38,4 +49,19 @@ object JavaWebSocket extends JavaHelpers {
 
   }
 
+  // -- Bytes
+
+  def ofBytes(retrieveWebSocket: => play.mvc.WebSocket[Array[Byte]]) = webSocketWrapper[Array[Byte]](retrieveWebSocket)
+
+  // -- String
+
+  def ofString(retrieveWebSocket: => play.mvc.WebSocket[String]) = webSocketWrapper[String](retrieveWebSocket)
+
+  // -- Json (JsonNode)
+
+  implicit val jsonFrame = play.api.mvc.WebSocket.FrameFormatter.stringFrame.transform(
+    play.libs.Json.stringify, play.libs.Json.parse
+  )
+
+  def ofJson(retrieveWebSocket: => play.mvc.WebSocket[org.codehaus.jackson.JsonNode]) = webSocketWrapper[org.codehaus.jackson.JsonNode](retrieveWebSocket)
 }

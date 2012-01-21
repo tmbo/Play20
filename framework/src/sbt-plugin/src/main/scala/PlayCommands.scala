@@ -170,7 +170,7 @@ trait PlayCommands {
         new EclipseClasspathEntryTransformerFactory {
           override def createTransformer(ref: ProjectRef, state: State) =
             setting(crossTarget in ref)(state) map (ct =>
-              (entries: Seq[EclipseClasspathEntry]) => entries :+ EclipseClasspathEntry.Lib(ct + "/classes_managed")
+              (entries: Seq[EclipseClasspathEntry]) => entries :+ EclipseClasspathEntry.Lib(ct + java.io.File.separator + "classes_managed")
             )
         }
     EclipsePlugin.eclipseSettings ++ Seq(EclipseKeys.commandName := "eclipsify",
@@ -389,7 +389,7 @@ trait PlayCommands {
 
   // ----- Post compile (need to be refactored and fully configurable)
 
-  val PostCompile = (sourceDirectory in Compile, dependencyClasspath in Compile, compile in Compile, javaSource in Compile, sourceManaged in Compile, classDirectory in Compile) map { (src, deps, analysis, javaSrc, srcManaged, classes) =>
+  val PostCompile = (sourceDirectory in Compile, dependencyClasspath in Compile, compile in Compile, javaSource in Compile, sourceManaged in Compile, classDirectory in Compile, ebeanEnabled) map { (src, deps, analysis, javaSrc, srcManaged, classes, ebean) =>
 
     // Properties
 
@@ -403,23 +403,32 @@ trait PlayCommands {
     javaClasses.foreach(play.core.enhancers.PropertiesEnhancer.rewriteAccess(classpath, _))
 
     // EBean
+    if (ebean) {
+      try {
 
-    try {
+        val cp = deps.map(_.data.toURI.toURL).toArray :+ classes.toURI.toURL
 
-      val cp = deps.map(_.data.toURI.toURL).toArray :+ classes.toURI.toURL
+        import com.avaje.ebean.enhance.agent._
+        import com.avaje.ebean.enhance.ant._
+        import collection.JavaConverters._
+        import com.typesafe.config._
+        val cl = ClassLoader.getSystemClassLoader
 
-      import com.avaje.ebean.enhance.agent._
-      import com.avaje.ebean.enhance.ant._
+        val t = new Transformer(cp, "debug=-1")
 
-      val cl = ClassLoader.getSystemClassLoader
+        val ft = new OfflineFileTransform(t, cl, classes.getAbsolutePath, classes.getAbsolutePath)
 
-      val t = new Transformer(cp, "debug=-1")
+        //model definition only can come from bundled application.conf at this point and "conf" folder is not visible as a resource from this classloader, so
 
-      val ft = new OfflineFileTransform(t, cl, classes.getAbsolutePath, classes.getAbsolutePath)
-      ft.process("models/**")
+        val config = ConfigFactory.load(ConfigFactory.parseFileAnySyntax(new File("conf/application.conf")))
 
-    } catch {
-      case _ =>
+        val models = try {
+          config.getConfig("ebean").entrySet.asScala.map(_.getValue.unwrapped).toSet.mkString(",")
+        } catch { case e: ConfigException.Missing => "models.*" }
+        ft.process(models)
+      } catch {
+        case _ =>
+      }
     }
 
     // Copy managed classes
@@ -441,13 +450,13 @@ trait PlayCommands {
 
   // ----- Source generators
 
-  val RouteFiles = (confDirectory: File, generatedDir: File) => {
+  val RouteFiles = (confDirectory: File, generatedDir: File, additionalImports: Seq[String]) => {
     import play.core.Router.RoutesCompiler._
 
     ((generatedDir ** "routes.java").get ++ (generatedDir ** "routes_*.scala").get).map(GeneratedSource(_)).foreach(_.sync())
     try {
       (confDirectory * "routes").get.foreach { routesFile =>
-        compile(routesFile, generatedDir)
+        compile(routesFile, generatedDir, additionalImports)
       }
     } catch {
       case RoutesCompilationError(source, message, line, column) => {

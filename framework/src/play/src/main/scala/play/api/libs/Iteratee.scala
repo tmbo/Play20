@@ -84,7 +84,7 @@ object Iteratee {
    */
   def ignore[E]: Iteratee[E, Unit] = fold[E, Unit](())((_, _) => ())
 
-  def mapChunk_[E](f: E => Unit): Iteratee[E, Unit] = fold[E, Unit](())((_, e) => f(e))
+  def foreach[E](f: E => Unit): Iteratee[E, Unit] = fold[E, Unit](())((_, e) => f(e))
 
   def repeat[E, A](i: Iteratee[E, A]): Iteratee[E, Seq[A]] = {
 
@@ -567,6 +567,12 @@ object Enumeratee {
 }
 object Enumerator {
 
+  def flatten[E](eventuallyEnum: Promise[Enumerator[E]]): Enumerator[E] = new Enumerator[E] {
+
+    def apply[A](it: Iteratee[E, A]): Promise[Iteratee[E, A]] = eventuallyEnum.flatMap(_.apply(it))
+
+  }
+
   def enumInput[E](e: Input[E]) = new Enumerator[E] {
     def apply[A](i: Iteratee[E, A]): Promise[Iteratee[E, A]] =
       i.fold((a, e) => Promise.pure(i),
@@ -636,37 +642,36 @@ object Enumerator {
 
   import scalax.io.JavaConverters._
 
-  def enumerateStream(input: java.io.InputStream, chunkSize: Int = 1024 * 8) = new Enumerator[Array[Byte]] {
-    def apply[A](it: Iteratee[Array[Byte], A]): Promise[Iteratee[Array[Byte], A]] = {
+  def callbackEnumerator[E](retriever: () => Promise[Option[E]],
+    onComplete: () => Unit = () => (),
+    onError: (String, Input[E]) => Unit = (_: String, _: Input[E]) => ()) = new Enumerator[E] {
+    def apply[A](it: Iteratee[E, A]): Promise[Iteratee[E, A]] = {
 
-      var iterateeP = Promise[Iteratee[Array[Byte], A]]()
+      var iterateeP = Promise[Iteratee[E, A]]()
 
-      def step(it: Iteratee[Array[Byte], A]) {
+      def step(it: Iteratee[E, A]) {
 
-        val next = it.pureFold(
-          (a, e) => { iterateeP.redeem(it); None },
+        val next = it.fold(
+          (a, e) => { iterateeP.redeem(it); Promise.pure(None) },
           k => {
-            val buffer = new Array[Byte](chunkSize)
-            input.read(buffer) match {
-              case -1 => {
+            retriever().map {
+              case None => {
                 val remainingIteratee = k(Input.EOF)
                 iterateeP.redeem(remainingIteratee)
                 None
               }
-              case read => {
-                val input = new Array[Byte](read)
-                System.arraycopy(buffer, 0, input, 0, read)
-                val nextIteratee = k(Input.El(input))
+              case Some(read) => {
+                val nextIteratee = k(Input.El(read))
                 Some(nextIteratee)
               }
             }
           },
-          (_, _) => { iterateeP.redeem(it); None }
+          (_, _) => { iterateeP.redeem(it); Promise.pure(None) }
         )
 
         next.extend1 {
           case Redeemed(Some(i)) => step(i)
-          case _ => input.close()
+          case _ => onComplete
         }
 
       }
@@ -674,6 +679,21 @@ object Enumerator {
       step(it)
       iterateeP
     }
+  }
+
+  def enumerateStream(input: java.io.InputStream, chunkSize: Int = 1024 * 8) = {
+
+    callbackEnumerator(() => {
+      val buffer = new Array[Byte](chunkSize)
+      val chunk = input.read(buffer) match {
+        case -1 => None
+        case read =>
+          val input = new Array[Byte](read)
+          System.arraycopy(buffer, 0, input, 0, read)
+          Some(input)
+      }
+      Promise.pure(chunk)
+    }, input.close)
   }
 
   def enumerateFile(file: java.io.File, chunkSize: Int = 1024 * 8): Enumerator[Array[Byte]] = enumerateStream(new java.io.FileInputStream(file), chunkSize)
@@ -703,7 +723,8 @@ object Enumerator {
 
 }
 
-class CallbackEnumerator[E](
+class PushEnumerator[E](
+    onStart: => Unit = () => (),
     onComplete: => Unit = () => (),
     onError: (String, Input[E]) => Unit = (_: String, _: Input[E]) => ()) extends Enumerator[E] {
 
@@ -711,6 +732,7 @@ class CallbackEnumerator[E](
   var promise: Promise[Iteratee[E, _]] with Redeemable[Iteratee[E, _]] = _
 
   def apply[A](it: Iteratee[E, A]): Promise[Iteratee[E, A]] = {
+    onStart
     iteratee = it.asInstanceOf[Iteratee[E, _]]
     val newPromise = new STMPromise[Iteratee[E, A]]()
     promise = newPromise.asInstanceOf[Promise[Iteratee[E, _]] with Redeemable[Iteratee[E, _]]]

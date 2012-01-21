@@ -26,7 +26,15 @@ trait PlaySettings {
 
       "play.mvc.Http.Context.Implicit._",
 
-      "views.%format%._"))
+      "views.%format%._"),
+
+    routesImport ++= Seq(
+      "play.libs.F"
+    ),
+
+    ebeanEnabled := true
+
+  )
 
   lazy val defaultScalaSettings = Seq[Setting[_]](
 
@@ -84,7 +92,7 @@ trait PlaySettings {
 
     testListeners <<= (target, streams).map((t, s) => Seq(new eu.henkelmann.sbt.JUnitXmlTestsListener(t.getAbsolutePath, s.log))),
 
-    sourceGenerators in Compile <+= (confDirectory, sourceManaged in Compile) map RouteFiles,
+    sourceGenerators in Compile <+= (confDirectory, sourceManaged in Compile, routesImport) map RouteFiles,
 
     // Adds config/routes to continious triggers
     watchSources <+= confDirectory map { _ / "routes" },
@@ -137,9 +145,11 @@ trait PlaySettings {
     resourceGenerators in Compile <+= JavascriptCompiler,
 
     minify := false,
-    
+
+    ebeanEnabled := false,
+
     logManager <<= extraLoggers(PlayLogManager.default),
-    
+
     ivyLoggingLevel := UpdateLogging.DownloadOnly,
 
     playAssetsDirectories := Seq.empty[File],
@@ -147,6 +157,8 @@ trait PlaySettings {
     playAssetsDirectories <+= baseDirectory / "public",
 
     templatesImport := Seq("play.api.templates._", "play.api.templates.PlayMagic._"),
+
+    routesImport := Seq.empty[String],
 
     templatesTypes := {
       case "html" => ("play.api.templates.Html", "play.api.templates.HtmlFormat")
