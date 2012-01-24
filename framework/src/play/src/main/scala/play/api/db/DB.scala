@@ -289,7 +289,9 @@ class DBPlugin(app: Application) extends Plugin {
     }.getOrElse(Map.empty))
   }
 
-  override def enabled = if (db.datasources.size > 0) true else false
+  private val pluginDisabled = app.configuration.getString("dbplugin").filter(_ == "disabled").isDefined
+
+  override def enabled = pluginDisabled == false
 
   /** Retrieves the underlying `DBApi` managing the data sources. */
   def api = db
@@ -317,9 +319,15 @@ class DBPlugin(app: Application) extends Plugin {
   override def onStop() {
     db.datasources.values.foreach {
       case (ds, _) => try {
+        ds.close()
         val bone = new com.jolbox.bonecp.BoneCP(ds.getConfig)
         bone.shutdown()
       } catch { case _ => }
+    }
+    val drivers = DriverManager.getDrivers()
+    while (drivers.hasMoreElements) {
+      val driver = drivers.nextElement
+      DriverManager.deregisterDriver(driver)
     }
   }
 
