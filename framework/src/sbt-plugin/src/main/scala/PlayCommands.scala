@@ -3,6 +3,10 @@ package sbt
 import scala.collection.parallel.CompositeThrowable
 import Keys._
 import CommandSupport.{ ClearOnFailure, FailureWall }
+import complete.Parser
+import Parser._
+import Cache.seqFormat
+import sbinary.DefaultProtocol.StringFormat
 
 import play.api._
 import play.core._
@@ -13,8 +17,9 @@ import PlayExceptions._
 import PlayKeys._
 
 import scala.annotation.tailrec
+import scala.collection.JavaConverters._
 
-trait PlayCommands {
+trait PlayCommands extends PlayJvm {
   this: PlayReloader =>
 
   //- mainly scala, mainly java or none
@@ -22,10 +27,6 @@ trait PlayCommands {
   val JAVA = "java"
   val SCALA = "scala"
   val NONE = "none"
-
-  // ----- Create a Play project with default settings
-
-  private[sbt] lazy val testListener = new PlayTestListener
 
   // ----- We need this later
 
@@ -114,6 +115,59 @@ trait PlayCommands {
     assetsMapping
   }
 
+  val javaRunner = TaskKey[File]("java-runner")
+  val runWith = TaskKey[RunWith]("run-with")
+
+  // --- Test Runner
+  val testRunner = TaskKey[Map[String, String]]("test-runner")
+  val testFrameworkCommandOptions = TaskKey[(String, Option[String]) => Seq[String]]("test-framework-command-options")
+  val testJvmOptions = SettingKey[Seq[String]]("test-jvm-options")
+  val testNames = TaskKey[Seq[String]]("test-names")
+  val testAllJvmOptions = TaskKey[JVMOptions]("test-jvm-all-options")
+
+  def generateJVMCommandOptions(fullClasspath: Classpath, target: File) = {
+    val classpathFiles = (fullClasspath.files ++ (target * "scala-*" * "*classes").get).absString
+    (runner: String, args: Option[String]) =>
+      Seq("-cp", classpathFiles, runner) ++ args.map(_.split(" ").toSeq).getOrElse(Nil)
+  }
+
+  def collectTestNames = (definedTests in Test) map { tests => tests.toSeq.map(_.name.toString) }
+
+  private def selectTestsFor(testNames: Seq[String]) = if (testNames.size > 0) Some(testNames.mkString(" ")) else None
+
+  def testTask = (testNames, testRunner, runWith, testAllJvmOptions, sourceDirectory, streams) map {
+    (testNames, testRunner, runWith, testAllJvmOptions, srcDir, s) =>
+      {
+        if (testNames.isEmpty)
+          s.log.info("No tests to run.")
+        else
+          testRunner.keys.foreach { testType =>
+            val current = testNames.filter(_.endsWith(testType))
+            selectTestsFor(current).map { arg => fork("Fork JVM for test, filter: *" + testType, testRunner(testType), Some(arg), runWith, testAllJvmOptions, srcDir, s.log) }.getOrElse(Unit)
+          }
+      }
+  }
+
+  def testOnlyTask = InputTask(loadForParser(testNames)((s, i) => Defaults.testOnlyParser(s, i getOrElse Nil))) { result =>
+    (testNames, testRunner, runWith, testAllJvmOptions, sourceDirectory, streams, result) map {
+      case (testNames, testRunner, runWith, testAllJvmOptions, srcDir, s, (userDefinedTests, _)) =>
+        val testsPassedIn = userDefinedTests.map { i =>
+          if (i.contains("*"))
+            testNames.filter(_.endsWith(i.replace("*", "")))
+          else
+            testNames.filter(_ == i)
+        }.flatten
+        if (testsPassedIn.isEmpty)
+          s.log.info("No tests to run.")
+        else {
+          testRunner.keys.foreach { testType =>
+            val current = testsPassedIn.filter(_.endsWith(testType))
+            selectTestsFor(current).map(arg => fork("Fork JVM for test, filter: " + arg, testRunner(testType), Some(arg), runWith, testAllJvmOptions, srcDir, s.log)).getOrElse(Unit)
+          }
+        }
+    }
+  }
+
   val playReload = TaskKey[sbt.inc.Analysis]("play-reload")
   val playReloadTask = (playCopyAssets, playCompileEverything) map { (_, analysises) =>
     analysises.reduceLeft(_ ++ _)
@@ -140,14 +194,26 @@ trait PlayCommands {
     }
 
     val start = target / "start"
+
+    val config = Option(System.getProperty("config.file"))
+
     IO.write(start,
-      """java "$@" -cp "`dirname $0`/lib/*" play.core.server.NettyServer `dirname $0`""" /* */ )
+      """java "$@" -cp "`dirname $0`/lib/*" """ + config.map(_ => "-Dconfig.file=`dirname $0`/application.conf ").getOrElse("") + """play.core.server.NettyServer `dirname $0`""" /* */ )
     val scripts = Seq(start -> (packageName + "/start"))
 
     val other = Seq((root / "README") -> (packageName + "/README"))
 
-    IO.zip(libs ++ scripts ++ other, zip)
+    val productionConfig = target / "application.conf"
+
+    val prodApplicationConf = config.map { location =>
+
+      IO.copyFile(new File(location), productionConfig)
+      Seq(productionConfig -> (packageName + "/application.conf"))
+    }.getOrElse(Nil)
+
+    IO.zip(libs ++ scripts ++ other ++ prodApplicationConf, zip)
     IO.delete(start)
+    IO.delete(productionConfig)
 
     println()
     println("Your application is ready in " + zip.getCanonicalPath)
@@ -178,6 +244,8 @@ trait PlayCommands {
       EclipseKeys.preTasks := Seq(compile in Compile),
       EclipseKeys.classpathEntryTransformerFactory := transformerFactory)
   }
+
+  // -- Intellij
 
   val playIntellij = TaskKey[Unit]("idea")
   val playIntellijTask = (javaSource in Compile, javaSource in Test, dependencyClasspath in Test, baseDirectory, dependencyClasspath in Runtime, normalizedName, version, scalaVersion, streams) map { (javaSource, jTestSource, testDeps, root, dependencies, id, version, scalaVersion, s) =>
@@ -518,7 +586,9 @@ trait PlayCommands {
 
   private def filterArgs(args: Seq[String]): (Seq[(String, String)], Int) = {
     val (properties, others) = args.span(_.startsWith("-D"))
-    val javaProperties = properties.map(_.drop(2).split('=')).map(a => a(0) -> a(1))
+    // collect arguments plus config file property if present 
+    val javaProperties = properties.map(_.drop(2).split('=')).map(a => a(0) -> a(1)).toSeq ++
+      Option(System.getProperty("config.file")).map(v => Seq("config.file" -> v)).getOrElse(Nil)
     val port = others.headOption.map { portString =>
       try {
         Integer.parseInt(portString)
@@ -733,7 +803,7 @@ trait PlayCommands {
 
           import java.lang.{ ProcessBuilder => JProcessBuilder }
           val builder = new JProcessBuilder(Seq(
-            "java") ++ properties.map { case (key, value) => "-D" + key + "=" + value } ++ Seq("-Dhttp.port=" + port, "-cp", classpath, "play.core.server.NettyServer", extracted.currentProject.base.getCanonicalPath): _*)
+            "java") ++ (properties ++ System.getProperties.asScala).map { case (key, value) => "-D" + key + "=" + value } ++ Seq("-Dhttp.port=" + port, "-cp", classpath, "play.core.server.NettyServer", extracted.currentProject.base.getCanonicalPath): _*)
 
           new Thread {
             override def run {
@@ -835,7 +905,7 @@ trait PlayCommands {
     println(play.console.Console.logo)
     println("""
             |> Type "help" or "license" for more information.
-            |> Type "exit" or use Ctrl+D to leave this console.
+            |> Type "exit" or use Ctrl+C to leave this console.
             |""".stripMargin)
 
     state.copy(
@@ -899,17 +969,6 @@ trait PlayCommands {
       }
     }
 
-  }
-
-  // -- Dependencies
-  val testResultReporter = TaskKey[List[String]]("test-result-reporter")
-  val testResultReporterTask = (state, thisProjectRef) map { (s, r) =>
-    testListener.result.toList
-  }
-  // -- Dependencies
-  val testResultReporterReset = TaskKey[Unit]("test-result-reporter-reset")
-  val testResultReporterResetTask = (state, thisProjectRef) map { (s, r) =>
-    testListener.result.clear
   }
 
   val computeDependencies = TaskKey[Seq[Map[Symbol, Any]]]("ivy-dependencies")

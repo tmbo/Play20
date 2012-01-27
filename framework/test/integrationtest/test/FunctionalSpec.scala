@@ -3,7 +3,7 @@ package test
 import play.api.test._
 import play.api.test.Helpers._
 
-import play.api.libs.WS
+import play.api.libs.ws._
 
 import org.specs2.mutable._
 
@@ -11,7 +11,7 @@ import models._
 import models.Protocol._
 
 
-object FunctionalSpec extends Specification {
+class FunctionalSpec extends Specification {
 
   "an Application" should {
 
@@ -24,13 +24,13 @@ object FunctionalSpec extends Specification {
         content must contain ("foo")
 
         val contentForm: String = await(WS.url("http://localhost:9001/post").post(Map("param1"->Seq("foo")))).body
-        contentForm must contain ("AnyContentAsUrlFormEncoded")
+        contentForm must contain ("AnyContentAsFormUrlEncoded")
         contentForm must contain ("foo")
 
          val jpromise: play.libs.F.Promise[play.libs.WS.Response] = play.libs.WS.url("http://localhost:9001/post").setHeader("Content-Type","application/x-www-form-urlencoded").post("param1=foo")
         val contentJava: String = jpromise.get().getBody()
         contentJava must contain ("param1")
-        contentJava must contain ("AnyContentAsUrlFormEncoded")
+        contentJava must contain ("AnyContentAsFormUrlEncoded")
         contentJava must contain ("foo")
 
         browser.goTo("http://localhost:9001")

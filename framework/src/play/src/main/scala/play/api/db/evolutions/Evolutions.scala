@@ -4,6 +4,7 @@ import java.io._
 import java.sql.{ Date, Connection, SQLException }
 
 import scalax.file._
+import scalax.io.JavaConverters._
 
 import play.core._
 
@@ -22,19 +23,28 @@ import play.api.libs.Codecs._
  * @param sql_up the SQL statements for UP application
  * @param sql_down the SQL statements for DOWN application
  */
-case class Evolution(revision: Int, sql_up: String = "", sql_down: String = "") {
+private[evolutions] case class Evolution(revision: Int, sql_up: String = "", sql_down: String = "") {
 
-  /** Revision hash, automatically computed from the SQL content. */
+  /**
+   * Revision hash, automatically computed from the SQL content.
+   */
   val hash = sha1(sql_down + sql_up)
+
 }
 
-/** A Script to run on the database. */
-trait Script {
+/**
+ * A Script to run on the database.
+ */
+private[evolutions] trait Script {
 
-  /** Original evolution. */
+  /**
+   * Original evolution.
+   */
   val evolution: Evolution
 
-  /** SQL to be run. */
+  /**
+   * SQL to be run.
+   */
   val sql: String
 }
 
@@ -44,7 +54,7 @@ trait Script {
  * @param evolution the original evolution
  * @param sql the SQL to be run
  */
-case class UpScript(evolution: Evolution, sql: String) extends Script
+private[evolutions] case class UpScript(evolution: Evolution, sql: String) extends Script
 
 /**
  * A DOWN Script to run on the database.
@@ -52,17 +62,21 @@ case class UpScript(evolution: Evolution, sql: String) extends Script
  * @param evolution the original evolution
  * @param sql the SQL to be run
  */
-case class DownScript(evolution: Evolution, sql: String) extends Script
+private[evolutions] case class DownScript(evolution: Evolution, sql: String) extends Script
 
-/** Defines Evolutions utilities functions. */
+/**
+ * Defines Evolutions utilities functions.
+ */
 object Evolutions {
 
-  /** Updates a local (file-based) evolution script. */
+  /**
+   * Updates a local (file-based) evolution script.
+   */
   def updateEvolutionScript(db: String = "default", revision: Int = 1, comment: String = "Generated", ups: String, downs: String)(implicit application: Application) {
     import play.api.libs._
 
-    val evolutions = application.getFile("db/evolutions/" + db + "/" + revision + ".sql");
-    Files.createDirectory(application.getFile("db/evolutions/" + db));
+    val evolutions = application.getFile("conf/evolutions/" + db + "/" + revision + ".sql");
+    Files.createDirectory(application.getFile("conf/evolutions/" + db));
     Files.writeFileIfChanged(evolutions,
       """|# --- %s
                |
@@ -76,10 +90,6 @@ object Evolutions {
   }
 
   // --
-
-  private def evolutionsDirectory(applicationPath: File, db: String): Option[File] = {
-    Option(new File(applicationPath, "db/evolutions/" + db)).filter(_.exists)
-  }
 
   private def executeQuery(sql: String)(implicit c: Connection) = {
     c.createStatement.executeQuery(sql)
@@ -266,8 +276,8 @@ object Evolutions {
    * @param applicationPath the application path
    * @param db the database name
    */
-  def evolutionScript(api: DBApi, applicationPath: File, db: String) = {
-    val application = applicationEvolutions(applicationPath, db)
+  def evolutionScript(api: DBApi, applicationClassloader: ClassLoader, db: String) = {
+    val application = applicationEvolutions(applicationClassloader, db)
     val database = databaseEvolutions(api, db)
 
     val (nonConflictingDowns, dRest) = database.span(e => !application.headOption.exists(e.revision <= _.revision))
@@ -319,77 +329,93 @@ object Evolutions {
   /**
    * Reads the evolutions from the application.
    *
-   * @param applicationPath the application path
    * @param db the database name
    */
-  def applicationEvolutions(applicationPath: File, db: String) = {
-    evolutionsDirectory(applicationPath, db).map { dir =>
+  def applicationEvolutions(applicationClassloader: ClassLoader, db: String) = {
 
-      val evolutionScript = """^([0-9]+)[.]sql$""".r
-      val upsMarker = """^#.*!Ups.*$""".r
-      val downsMarker = """^#.*!Downs.*$""".r
+    val upsMarker = """^#.*!Ups.*$""".r
+    val downsMarker = """^#.*!Downs.*$""".r
 
-      val UPS = "UPS"
-      val DOWNS = "DOWNS"
-      val UNKNOWN = "UNKNOWN"
+    val UPS = "UPS"
+    val DOWNS = "DOWNS"
+    val UNKNOWN = "UNKNOWN"
 
-      val mapUpsAndDowns: PartialFunction[String, String] = {
-        case upsMarker() => UPS
-        case downsMarker() => DOWNS
-        case _ => UNKNOWN
+    val mapUpsAndDowns: PartialFunction[String, String] = {
+      case upsMarker() => UPS
+      case downsMarker() => DOWNS
+      case _ => UNKNOWN
+    }
+
+    val isMarker: PartialFunction[String, Boolean] = {
+      case upsMarker() => true
+      case downsMarker() => true
+      case _ => false
+    }
+
+    Collections.unfoldLeft(1) { revision =>
+      Option(applicationClassloader.getResourceAsStream("evolutions/" + db + "/" + revision + ".sql")).map { stream =>
+        (revision + 1, (revision, stream.asInput.slurpString))
       }
+    }.sortBy(_._1).map {
+      case (revision, script) => {
 
-      val isMarker: PartialFunction[String, Boolean] = {
-        case upsMarker() => true
-        case downsMarker() => true
-        case _ => false
+        val parsed = Collections.unfoldLeft(("", script.split('\n').toList.map(_.trim))) {
+          case (_, Nil) => None
+          case (context, lines) => {
+            val (some, next) = lines.span(l => !isMarker(l))
+            Some((next.headOption.map(c => (mapUpsAndDowns(c), next.tail)).getOrElse("" -> Nil),
+              context -> some.mkString("\n")))
+          }
+        }.reverse.drop(1).groupBy(i => i._1).mapValues { _.map(_._2).mkString("\n").trim }
+
+        Evolution(
+          revision,
+          parsed.get(UPS).getOrElse(""),
+          parsed.get(DOWNS).getOrElse(""))
       }
+    }.reverse
 
-      Path(dir).children().toSeq.map(f => f.name -> f).collect {
-        case (evolutionScript(revision), script) => Integer.parseInt(revision) -> script.slurpString
-      }.toList.sortBy(_._1).map {
-        case (revision, script) => {
-
-          val parsed = Collections.unfoldLeft(("", script.split('\n').toList.map(_.trim))) {
-            case (_, Nil) => None
-            case (context, lines) => {
-              val (some, next) = lines.span(l => !isMarker(l))
-              Some((next.headOption.map(c => (mapUpsAndDowns(c), next.tail)).getOrElse("" -> Nil),
-                context -> some.mkString("\n")))
-            }
-          }.reverse.drop(1).groupBy(i => i._1).mapValues { _.map(_._2).mkString("\n").trim }
-
-          Evolution(
-            revision,
-            parsed.get(UPS).getOrElse(""),
-            parsed.get(DOWNS).getOrElse(""))
-        }
-      }.reverse
-
-    }.getOrElse(Nil)
   }
 
 }
 
-/** Play Evolutions plugin. */
+/**
+ * Play Evolutions plugin.
+ */
 class EvolutionsPlugin(app: Application) extends Plugin {
 
   import Evolutions._
 
-  private val pluginDisabled = app.configuration.getString("evolutionplugin").filter(_ == "disabled").isDefined
+  /**
+   * Is this plugin enabled.
+   *
+   * {{{
+   * evolutionplugin = disabled
+   * }}}
+   */
+  override lazy val enabled = app.configuration.getConfig("db").isDefined && {
+    !app.configuration.getString("evolutionplugin").filter(_ == "disabled").isDefined
+  }
 
-  override def enabled = app.configuration.getConfig("db").isDefined && pluginDisabled == false
-
-  /** Checks the evolutions state. */
+  /**
+   * Checks the evolutions state.
+   */
   override def onStart() {
     val api = app.plugin[DBPlugin].map(_.api).getOrElse(throw new Exception("there should be a database plugin registered at this point but looks like it's not available, so evolution won't work. Please make sure you register a db plugin properly"))
 
     api.datasources.foreach {
       case (db, (ds, _)) => {
-        val script = evolutionScript(api, app.path, db)
+        val script = evolutionScript(api, app.classloader, db)
         if (!script.isEmpty) {
           app.mode match {
             case Mode.Test => Evolutions.applyScript(api, db, script)
+            case Mode.Prod if app.configuration.getBoolean("applyEvolutions." + db).filter(_ == true).isDefined => Evolutions.applyScript(api, db, script)
+            case Mode.Prod => {
+              Logger("play").warn("Your production database [" + db + "] needs evolutions! \n\n" + toHumanReadableScript(script))
+              Logger("play").warn("Run with -DapplyEvolutions." + db + "=true if you want to run them automatically (be careful)")
+
+              throw InvalidDatabaseRevision(db, toHumanReadableScript(script))
+            }
             case _ => throw InvalidDatabaseRevision(db, toHumanReadableScript(script))
           }
         }
@@ -399,7 +425,9 @@ class EvolutionsPlugin(app: Application) extends Plugin {
 
 }
 
-/** Can be used to run off-line evolutions, i.e. outside a running application. */
+/**
+ * Can be used to run off-line evolutions, i.e. outside a running application.
+ */
 object OfflineEvolutions {
 
   /**
@@ -409,14 +437,14 @@ object OfflineEvolutions {
    * @param classloader the classloader used to load the driver
    * @param dbName the database name
    */
-  def applyScript(applicationPath: File, classloader: ClassLoader, dbName: String) {
+  def applyScript(classloader: ClassLoader, dbName: String) {
 
     import play.api._
 
     val api = DBApi(
       Map(dbName -> DBApi.createDataSource(
         Configuration.load().getConfig("db." + dbName).get, classloader)))
-    val script = Evolutions.evolutionScript(api, applicationPath, dbName)
+    val script = Evolutions.evolutionScript(api, classloader, dbName)
 
     if (!Play.maybeApplication.exists(_.mode == Mode.Test)) {
       Logger("play").warn("Applying evolution script for database '" + dbName + "':\n\n" + Evolutions.toHumanReadableScript(script))

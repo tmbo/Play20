@@ -51,6 +51,16 @@ trait PlaySettings {
       "views.%format%._"))
 
   lazy val defaultSettings = Seq[Setting[_]](
+    testRunner := Map("Test" -> "play.api.test.JunitRunner",
+      "Spec" -> "play.api.test.SpecRunner"),
+    testFrameworkCommandOptions <<= (fullClasspath in Test, target) map generateJVMCommandOptions,
+    javaRunner <<= javaHome map { javaCommand(_, "java") },
+    runWith <<= (javaRunner, scalaInstance) map RunWith,
+    testJvmOptions := Seq.empty,
+    testNames <<= collectTestNames triggeredBy (compile in Test),
+    testAllJvmOptions <<= (testJvmOptions, testFrameworkCommandOptions) map JVMOptions,
+    test <<= testTask,
+    testOnly <<= testOnlyTask,
 
     resolvers ++= Seq(
       Resolver.url("Play Repository", url("http://download.playframework.org/ivy-releases/"))(Resolver.ivyStylePatterns),
@@ -91,8 +101,6 @@ trait PlaySettings {
 
     testOptions in Test += Tests.Argument("junitxml", "console"),
 
-    testListeners <<= (target, streams).map((t, s) => Seq(new eu.henkelmann.sbt.JUnitXmlTestsListener(t.getAbsolutePath, s.log))),
-
     sourceGenerators in Compile <+= (confDirectory, sourceManaged in Compile, routesImport) map RouteFiles,
 
     // Adds config/routes to continious triggers
@@ -114,10 +122,6 @@ trait PlaySettings {
     compile in (Compile) <<= PostCompile,
 
     dist <<= distTask,
-
-    testResultReporter <<= testResultReporterTask,
-
-    testResultReporterReset <<= testResultReporterResetTask,
 
     computeDependencies <<= computeDependenciesTask,
 

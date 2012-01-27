@@ -32,16 +32,13 @@ public class Application {
         return application.path();
     }
     
+    /**
+     * Retrieves the application configuration/
+     * <p>
+     * @return the application path
+     */
     public Configuration configuration() {
         return new Configuration(application.configuration());
-    }
-
-    /**
-    * Returns the Messages-instance used to access the message API for the application
-    * @return a Messages instance
-    */
-    public Messages messages() {
-        return Messages.current();
     }
     
     /**
@@ -83,6 +80,9 @@ public class Application {
         return Scala.orNull(application.resourceAsStream(relativePath));
     }
     
+    /**
+     * Retrieve the plugin instance for the class.
+     */
     public <T> T plugin(Class<T> pluginClass) {
         return Scala.orNull(application.plugin(pluginClass));
     }
@@ -103,6 +103,27 @@ public class Application {
         return scala.collection.JavaConverters.setAsJavaSetConverter(
             application.getTypesAnnotatedWith(packageName, annotation)
         ).asJava();
+    }
+    
+    /**
+     * Returns `true` if the application is `DEV` mode.
+     */
+    public boolean isDev() {
+        return play.api.Play.isDev(application);
+    }
+    
+    /**
+     * Returns `true` if the application is `PROD` mode.
+     */
+    public boolean isProd() {
+        return play.api.Play.isProd(application);
+    }
+    
+    /**
+     * Returns `true` if the application is `TEST` mode.
+     */
+    public boolean isTest() {
+        return play.api.Play.isTest(application);
     }
     
 }

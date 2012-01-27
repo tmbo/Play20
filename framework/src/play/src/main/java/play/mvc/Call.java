@@ -7,6 +7,8 @@ package play.mvc;
  */
 public abstract class Call {
     
+    private static java.util.Random rand = new java.util.Random();
+    
     /**
      * The request URL.
      */
@@ -17,18 +19,43 @@ public abstract class Call {
      */
     public abstract String method();
     
+    /**
+     * Append a unique identifier to the URL.
+     */
+    public Call unique() {
+        String url = this.url();
+        if(url.indexOf('?') == -1) {
+            url = url + "?" + rand.nextLong();
+        } else {
+            url = url + "&" + rand.nextLong();
+        }
+        return new play.api.mvc.Call(method(), url);
+    }
+    
+    /**
+     * Transform this call to an absolute URL.
+     */
     public String absoluteURL(Http.Request request) {
         return absoluteURL(request, false);
     }
     
+    /**
+     * Transform this call to an absolute URL.
+     */
     public String absoluteURL(Http.Request request, boolean secure) {
         return "http" + (secure ? "s" : "") + "://" + request.host() + this.url();
     }
     
+    /**
+     * Transform this call to an WebSocket URL.
+     */
     public String webSocketURL(Http.Request request) {
         return webSocketURL(request, false);
     }
     
+    /**
+     * Transform this call to an WebSocket URL.
+     */
     public String webSocketURL(Http.Request request, boolean secure) {
       return "ws" + (secure ? "s" : "") + "://" + request.host() + this.url();
     }
