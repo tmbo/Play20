@@ -96,6 +96,10 @@ trait PlayCommands extends PlayJvm {
     val cacheFile = c / "copy-assets"
     val mappings = (r.map(_ ***).reduceLeft(_ +++ _) x rebase(b, t)) ++ (resources x rebase(resourcesDirectories, t))
 
+    /*
+    Disable GZIP Generation for this release.
+    -----
+     
     val toZip = mappings.collect { case (resource, _) if resource.isFile && !resource.getName.endsWith(".gz") => resource } x relativeTo(Seq(b, resourcesDirectories))
 
     val gzipped = toZip.map {
@@ -107,7 +111,9 @@ trait PlayCommands extends PlayJvm {
       }
     }
 
-    val assetsMapping = mappings ++ gzipped
+    val assetsMapping = mappings ++ gzipped*/
+    
+    val assetsMapping = mappings
 
     s.log.debug("Copy play resource mappings: " + mappings.mkString("\n\t", "\n\t", ""))
 
@@ -587,8 +593,7 @@ trait PlayCommands extends PlayJvm {
   private def filterArgs(args: Seq[String]): (Seq[(String, String)], Int) = {
     val (properties, others) = args.span(_.startsWith("-D"))
     // collect arguments plus config file property if present 
-    val javaProperties = properties.map(_.drop(2).split('=')).map(a => a(0) -> a(1)).toSeq ++
-      Option(System.getProperty("config.file")).map(v => Seq("config.file" -> v)).getOrElse(Nil)
+    val javaProperties = properties.map(_.drop(2).split('=')).map(a => a(0) -> a(1)).toSeq 
     val port = others.headOption.map { portString =>
       try {
         Integer.parseInt(portString)
