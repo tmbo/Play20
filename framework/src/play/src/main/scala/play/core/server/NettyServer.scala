@@ -157,8 +157,18 @@ object NettyServer {
     }
 
     play.utils.Threads.withContextClassLoader(this.getClass.getClassLoader) {
-      val appProvider = new ReloadableApplication(sbtLink)
-      new NettyServer(appProvider, port, mode = Mode.Dev)
+      try {
+        val appProvider = new ReloadableApplication(sbtLink)
+        new NettyServer(appProvider, port, mode = Mode.Dev)
+      } catch {
+        case e => {
+          throw e match {
+            case e: ExceptionInInitializerError => e.getCause
+            case e => e
+          }
+        }
+      }
+
     }
   }
 

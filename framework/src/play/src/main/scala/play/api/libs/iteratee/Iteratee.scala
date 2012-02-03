@@ -309,6 +309,8 @@ trait Enumerator[E] {
 
   }
 
+  def through[To](enumeratee: Enumeratee[E, To]): Enumerator[To] = &>(enumeratee)
+
   /**
    * Alias for `andThen`
    */
@@ -370,7 +372,7 @@ trait Enumeratee[From, To] {
 
 }
 
-object Enumeratee {
+object Enumeratee{
 
   trait CheckDone[From, To] extends Enumeratee[From, To] {
 
@@ -475,6 +477,91 @@ object Enumeratee {
 
   }
 
+  def scanLeft[From] = new {
+
+    def apply[To](seed:To)(f:(To,From) => To):Enumeratee[From,To] = new CheckDone[From,To] {
+
+      def step[A](lastTo: To )(k: K[To, A]): K[From, Iteratee[To, A]] = {
+
+        case in @ Input.El(e) =>
+          val next = f(lastTo,e)
+          new CheckDone[From, To] { def continue[A](k: K[To, A]) = Cont(step(next)(k)) } &> k(Input.El(next))
+
+        case in@Input.Empty => 
+           new CheckDone[From, To] { def continue[A](k: K[To, A]) = Cont(step(lastTo)(k)) } &> k(in)
+
+        case Input.EOF => Done(k(Input.EOF), Input.EOF)
+
+      }
+
+      def continue[A](k: K[To, A]) = Cont(step(seed)(k))
+    }
+  }
+
+  def grouped[From] = new {
+
+    def apply[To](folder: Iteratee[From,To]):Enumeratee[From,To] = new CheckDone[From,To] {
+
+      def step[A](f: Iteratee[From,To])(k: K[To, A]): K[From, Iteratee[To, A]] = {
+
+        case in @ (Input.El(_) | Input.Empty) =>
+
+          Iteratee.flatten(f.feed(in)).pureFlatFold(
+            (a,_) => new CheckDone[From, To] { def continue[A](k: K[To, A]) = Cont(step(folder)(k)) } &> k(Input.El(a)),
+            kF => Cont(step(Cont(kF))(k)),
+            (msg,e) => Error(msg,in))
+
+        case Input.EOF => Done(k(Input.EOF), Input.EOF)
+
+      }
+
+      def continue[A](k: K[To, A]) = Cont(step(folder)(k))
+    }
+  }
+
+  def filter[E](predicate: E => Boolean): Enumeratee[E, E] = new CheckDone[E, E] {
+
+    def step[A](k: K[E, A]): K[E, Iteratee[E, A]] = {
+
+      case in @ Input.El(e) if predicate(e) =>
+        new CheckDone[E, E] { def continue[A](k: K[E, A]) = Cont(step(k)) } &> k(in)
+
+      case in @ Input.El(e) => Cont(step(k))
+
+      case in @ Input.Empty =>
+        new CheckDone[E, E] { def continue[A](k: K[E, A]) = Cont(step(k)) } &> k(in)
+
+      case Input.EOF => Done(k(Input.EOF), Input.EOF)
+
+    }
+
+    def continue[A](k: K[E, A]) = Cont(step(k))
+
+  }
+
+  def collect[From] = new {
+
+    def apply[To](transformer: PartialFunction[From, To]): Enumeratee[From, To] = new CheckDone[From, To] {
+
+      def step[A](k: K[To, A]): K[From, Iteratee[To, A]] = {
+
+        case in @ Input.El(e) if transformer.isDefinedAt(e) =>
+          new CheckDone[From, To] { def continue[A](k: K[To, A]) = Cont(step(k)) } &> k(in.map(transformer))
+
+        case in @ Input.El(e) => Cont(step(k))
+
+        case in @ Input.Empty =>
+          new CheckDone[From, To] { def continue[A](k: K[To, A]) = Cont(step(k)) } &> k(in)
+
+        case Input.EOF => Done(k(Input.EOF), Input.EOF)
+
+      }
+
+      def continue[A](k: K[To, A]) = Cont(step(k))
+
+    }
+  }
+
   def drop[E](count: Int): Enumeratee[E, E] = new Enumeratee[E, E] {
 
     def applyOn[A](iteratee: Iteratee[E, A]): Iteratee[E, Iteratee[E, A]] = {
@@ -556,9 +643,9 @@ object Enumeratee {
       Cont(step(inner))
 
     }
-
   }
 }
+
 object Enumerator {
 
   def flatten[E](eventuallyEnum: Promise[Enumerator[E]]): Enumerator[E] = new Enumerator[E] {
@@ -699,6 +786,47 @@ object Enumerator {
   }
 
   import scalax.io.JavaConverters._
+
+
+  def callback1[E](retriever: Boolean => Promise[Option[E]],
+    onComplete: () => Unit = () => (),
+    onError: (String, Input[E]) => Unit = (_: String, _: Input[E]) => ()) = new Enumerator[E] {
+    def apply[A](it: Iteratee[E, A]): Promise[Iteratee[E, A]] = {
+
+      var iterateeP = Promise[Iteratee[E, A]]()
+
+      def step(it: Iteratee[E, A],initial:Boolean = false) {
+
+        val next = it.fold(
+          (a, e) => { iterateeP.redeem(it); Promise.pure(None) },
+          k => {
+            retriever(initial).map {
+              case None => {
+                val remainingIteratee = k(Input.EOF)
+                iterateeP.redeem(remainingIteratee)
+                None
+              }
+              case Some(read) => {
+                val nextIteratee = k(Input.El(read))
+                Some(nextIteratee)
+              }
+            }
+          },
+          (_, _) => { iterateeP.redeem(it); Promise.pure(None) }
+        )
+
+        next.extend1 {
+          case Redeemed(Some(i)) => step(i)
+          case _ => onComplete
+        }
+
+      }
+
+      step(it,true)
+      iterateeP
+    }
+  }
+
 
   def callbackEnumerator[E](retriever: () => Promise[Option[E]],
     onComplete: () => Unit = () => (),

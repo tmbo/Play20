@@ -28,5 +28,18 @@ object Frames {
     bytes => new BinaryWebSocketFrame(true, 0, org.jboss.netty.buffer.ChannelBuffers.wrappedBuffer(bytes)),
     { case frame: BinaryWebSocketFrame => frame.getBinaryData().array() })
 
+  val mixedFrame = FrameFormatter[Either[String, Array[Byte]]](
+    stringOrBytes => {
+      stringOrBytes.fold(
+        str => new TextWebSocketFrame(true, 0, str),
+        bytes => new BinaryWebSocketFrame(true, 0, org.jboss.netty.buffer.ChannelBuffers.wrappedBuffer(bytes))
+      )
+    },
+    {
+      case frame: TextWebSocketFrame => Left(frame.getText)
+      case frame: BinaryWebSocketFrame => Right(frame.getBinaryData.array)
+    }
+  )
+
 }
 
