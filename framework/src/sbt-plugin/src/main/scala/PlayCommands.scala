@@ -381,10 +381,11 @@ trait PlayCommands {
           Relation.empty[File, File] ++ generated,
           currentInfos)(FileInfo.lastModified.format)
 
-        // Return new files
         println("Finished compiling %s sources: %dms".format(name,System.currentTimeMillis-t))
-        generated.toMap.values.toSeq
-          
+        // Return new files
+ 
+        generated.map(_._2).distinct.toList
+        
       } else {
 
         // Return previously generated files

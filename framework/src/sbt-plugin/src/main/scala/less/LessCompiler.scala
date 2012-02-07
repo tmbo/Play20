@@ -2,9 +2,6 @@ package play.core.less
 
 import java.io._
 import play.api._
-
-import java.io._
-import play.api._
 import scala.sys.process._
 
 case class ExecLogger(var messages: List[String] = Nil,
