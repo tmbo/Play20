@@ -136,17 +136,7 @@ trait PlaySettings {
 
     playStage <<= playStageTask,
 
-    playIntellij <<= playIntellijTask,
-
     cleanFiles <+= distDirectory,
-
-    resourceGenerators in Compile <+= LessCompiler,
-
-    resourceGenerators in Compile <+= CoffeescriptCompiler,
-
-    resourceGenerators in Compile <+= JavascriptCompiler,
-
-    minify := false,
 
     ebeanEnabled := false,
 
@@ -154,13 +144,31 @@ trait PlaySettings {
 
     ivyLoggingLevel := UpdateLogging.DownloadOnly,
 
+    routesImport := Seq.empty[String],
+
+    playIntellij <<= playIntellijTask,
+
+    // Assets
+
     playAssetsDirectories := Seq.empty[File],
 
     playAssetsDirectories <+= baseDirectory / "public",
 
-    templatesImport := Seq("play.api.templates._", "play.api.templates.PlayMagic._"),
+    resourceGenerators in Compile <+= LessCompiler,
+    resourceGenerators in Compile <+= CoffeescriptCompiler,
+    resourceGenerators in Compile <+= JavascriptCompiler,
 
-    routesImport := Seq.empty[String],
+    lessEntryPoints <<= (sourceDirectory in Compile)(base => ((base / "assets" ** "*.less") --- base / "assets" ** "_*")),
+    coffeescriptEntryPoints <<= (sourceDirectory in Compile)(base => base / "assets" ** "*.coffee"),
+    javascriptEntryPoints <<= (sourceDirectory in Compile)(base => ((base / "assets" ** "*.js") --- (base / "assets" ** "_*"))),
+
+    lessOptions := Seq.empty[String],
+    coffeescriptOptions := Seq.empty[String],
+    closureCompilerOptions := Seq.empty[String],
+
+    // Templates
+
+    templatesImport := Seq("play.api.templates._", "play.api.templates.PlayMagic._"),
 
     templatesTypes := {
       case "html" => ("play.api.templates.Html", "play.api.templates.HtmlFormat")

@@ -33,7 +33,10 @@ object LessCompiler {
     val options = if(minified) "-x" else ""
     try {
       val process = Process("lessc "+options+" -",Some(source.getParentFile)) #< source
-      process !! logger
+      val normal = process !! logger
+      val debug = debugCompiler(source)
+      val min = minCompiler(source)
+      (normal, None, Seq(source))
     } catch {
       case e: java.lang.RuntimeException => {
         val error = logger.error match {

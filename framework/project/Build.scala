@@ -80,7 +80,7 @@ object PlayBuild extends Build {
       settings = buildSettings ++ Seq(
         sbtPlugin := true,
         libraryDependencies := sbtDependencies,
-        addSbtPlugin("com.typesafe.sbteclipse" % "sbteclipse-core" % "2.0.0-M3"),
+        addSbtPlugin("com.typesafe.sbteclipse" % "sbteclipse-core" % "2.0.0-RC1"),
         unmanagedJars in Compile  ++=  sbtJars,
         publishMavenStyle := false,
         publishTo := Some(playRepository),
@@ -162,9 +162,12 @@ object PlayBuild extends Build {
     }
 
     object Resolvers {
-        val playLocalRepository = Resolver.file("Play Local Repository", file("../repository/local"))(Resolver.ivyStylePatterns)   
-        val playRepository = Resolver.ssh("Play Repository", "download.playframework.org", "/srv/http/download.playframework.org/htdocs/ivy-releases/")(Resolver.ivyStylePatterns) as("root", new File(System.getProperty("user.home") + "/.ssh/id_rsa"), "") withPermissions("0644")
+        import BuildSettings._
+        val playLocalRepository = Resolver.file("Play Local Repository", file("../repository/local"))(Resolver.ivyStylePatterns) 
+        val playRepositorySSH = Resolver.ssh("Play Repository", "download.playframework.org", "/srv/http/download.playframework.org/htdocs/ivy-releases/")(Resolver.ivyStylePatterns) as("root", new File(System.getProperty("user.home") + "/.ssh/id_rsa"), "") withPermissions("0644")  
         val typesafe = "Typesafe Repository" at typesafeRepo
+        val typesafeSnapshot = "typesafe" at "http://repo.typesafe.com/typesafe/ivy-snapshots/"
+        val playRepository = if (buildVersion.endsWith("SNAPSHOT")) typesafeSnapshot else typesafe
     }
 
     object Dependencies {
