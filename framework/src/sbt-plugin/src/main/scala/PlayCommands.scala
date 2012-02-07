@@ -374,9 +374,17 @@ trait PlayCommands {
               IO.write(outMin, minified)
               dependencies.map(_ -> outMin)
             }.getOrElse(Nil)
-          }.seq
-          s.log.info("Finished compiling %s sources: %dms".format(name,System.currentTimeMillis-t))
-        }
+          }
+        }.seq
+          
+        Sync.writeInfo(cacheFile,
+          Relation.empty[File, File] ++ generated,
+          currentInfos)(FileInfo.lastModified.format)
+
+        // Return new files
+        println("Finished compiling %s sources: %dms".format(name,System.currentTimeMillis-t))
+        generated.toMap.values.toSeq
+          
       } else {
 
         // Return previously generated files
@@ -389,7 +397,7 @@ trait PlayCommands {
   val LessCompiler = AssetsCompiler("less",
     lessEntryPoints,
     { (name, min) => name.replace(".less", if (min) ".min.css" else ".css") },
-    { (lessFile, options) => play.core.less.LessCompiler.compile(lessFile) },
+    { (lessFile, options) => play.core.less.LessCompiler.compile(lessFile, options) },
     lessOptions
   )
 
@@ -409,7 +417,7 @@ trait PlayCommands {
       // Any error here would be because of CoffeeScript, not the developer;
       // so we don't want compilation to fail.
       val minified = 
-      	if(min)
+      	if(options.contains("minify"))
     	  catching(classOf[CompilationException])
     	  	.opt(play.core.jscompile.JavascriptCompiler.minify(jsSource, Some(coffeeFile.getName())))
     	else
