@@ -97,8 +97,6 @@ private[server] trait WebSocketHandler {
 
   def websocketable(req: HttpRequest) = new server.WebSocketable {
     def check =
-      // fixed to math on firefox request "Connection: keep-alive, Upgrade"
-      req.getHeader(CONNECTION).toLowerCase.contains(HttpHeaders.Values.UPGRADE.toLowerCase) &&
         HttpHeaders.Values.WEBSOCKET.equalsIgnoreCase(req.getHeader(HttpHeaders.Names.UPGRADE))
     def getHeader(header: String) = req.getHeader(header)
   }

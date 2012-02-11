@@ -2,7 +2,7 @@ import sbt._
 import Keys._
 
 object PlayBuild extends Build {
-
+  
     import Resolvers._
     import Dependencies._
     import BuildSettings._
@@ -10,14 +10,11 @@ object PlayBuild extends Build {
     import LocalSBT._
     import Tasks._
 
-    val typesafeRepo = "http://repo.typesafe.com/typesafe/releases/"
-
     lazy val TemplatesProject = Project(
         "Templates",
         file("src/templates"),
         settings = buildSettings ++ Seq(
             libraryDependencies := templatesDependencies,
-            publishMavenStyle := false,
             publishTo := Some(playRepository),
             publishArtifact in (Compile, packageDoc) := false,
             publishArtifact in (Compile, packageSrc) := false,
@@ -32,7 +29,6 @@ object PlayBuild extends Build {
         file("src/anorm"),
         settings = buildSettings ++ Seq(
             libraryDependencies := anormDependencies,
-            publishMavenStyle := false,
             publishTo := Some(playRepository),
             scalacOptions ++= Seq("-encoding", "utf8"),
             javacOptions ++= Seq("-encoding", "utf8"),
@@ -47,7 +43,6 @@ object PlayBuild extends Build {
         settings = buildSettings ++ Seq(
             libraryDependencies := runtime,
             sourceGenerators in Compile <+= sourceManaged in Compile map PlayVersion,
-            publishMavenStyle := false,
             publishTo := Some(playRepository),
             scalacOptions ++= Seq("-Xlint","-deprecation", "-unchecked","-encoding", "utf8"),
             javacOptions ++= Seq("-encoding", "utf8"),
@@ -64,7 +59,6 @@ object PlayBuild extends Build {
       file("src/play-test"),
       settings = buildSettings ++ Seq(
         libraryDependencies := testDependencies,
-        publishMavenStyle := false,
         publishTo := Some(playRepository),
         scalacOptions ++= Seq("-deprecation","-Xcheckinit", "-encoding", "utf8"),
         javacOptions ++= Seq("-encoding", "utf8"),
@@ -82,7 +76,6 @@ object PlayBuild extends Build {
         libraryDependencies := sbtDependencies,
         addSbtPlugin("com.typesafe.sbteclipse" % "sbteclipse-core" % "2.0.0-RC1"),
         unmanagedJars in Compile  ++=  sbtJars,
-        publishMavenStyle := false,
         publishTo := Some(playRepository),
         scalacOptions ++= Seq("-Xlint", "-deprecation", "-unchecked","-encoding", "utf8"),
         javacOptions ++= Seq("-encoding", "utf8"),
@@ -103,7 +96,6 @@ object PlayBuild extends Build {
       settings = buildSettings ++ Seq(
         libraryDependencies := consoleDependencies,
         unmanagedJars in Compile  ++=  sbtJars,
-        publishMavenStyle := false,
         publishTo := Some(playRepository),
         scalacOptions ++= Seq("-deprecation","-Xcheckinit", "-encoding", "utf8"),
         javacOptions ++= Seq("-encoding", "utf8"),
@@ -133,7 +125,7 @@ object PlayBuild extends Build {
     object BuildSettings {
 
         val buildOrganization = "play"
-        val buildVersion      = Option(System.getProperty("version")).getOrElse("2.0-RC1-SNAPSHOT")
+        val buildVersion      = Option(System.getProperty("play.version")).filterNot(_.isEmpty).getOrElse("2.0-xxx")
         val buildScalaVersion = "2.9.1"
         val buildSbtVersion   = "0.11.2"
 
@@ -164,9 +156,8 @@ object PlayBuild extends Build {
     object Resolvers {
         import BuildSettings._
         val playLocalRepository = Resolver.file("Play Local Repository", file("../repository/local"))(Resolver.ivyStylePatterns) 
-        val playRepositorySSH = Resolver.ssh("Play Repository", "download.playframework.org", "/srv/http/download.playframework.org/htdocs/ivy-releases/")(Resolver.ivyStylePatterns) as("root", new File(System.getProperty("user.home") + "/.ssh/id_rsa"), "") withPermissions("0644")  
-        val typesafe = "Typesafe Repository" at typesafeRepo
-        val typesafeSnapshot = "typesafe" at "http://repo.typesafe.com/typesafe/ivy-snapshots/"
+        val typesafe = "Typesafe Repository" at "http://repo.typesafe.com/typesafe/releases/"
+        val typesafeSnapshot = "Typesafe Snapshots Repository" at "http://repo.typesafe.com/typesafe/ivy-snapshots/"
         val playRepository = if (buildVersion.endsWith("SNAPSHOT")) typesafeSnapshot else typesafe
     }
 
@@ -180,8 +171,8 @@ object PlayBuild extends Build {
             "ch.qos.logback"                    %    "logback-core"             %   "1.0.0",
             "ch.qos.logback"                    %    "logback-classic"          %   "1.0.0",
             "com.github.scala-incubator.io"     %%   "scala-io-file"            %   "0.2.0",
-            "com.typesafe.akka"                 %    "akka-actor"               %   "2.0-M2",
-            "com.typesafe.akka"                 %    "akka-slf4j"               %   "2.0-M2",
+            "com.typesafe.akka"                 %    "akka-actor"               %   "2.0-M4",
+            "com.typesafe.akka"                 %    "akka-slf4j"               %   "2.0-M4",
             "com.typesafe.config"               %    "config"                   %   "0.2.1",
             "org.avaje"                         %    "ebean"                    %   "2.7.3" notTransitive(),
             "org.hibernate.javax.persistence"   %    "hibernate-jpa-2.0-api"    %   "1.0.1.Final",
@@ -194,15 +185,17 @@ object PlayBuild extends Build {
             "org.springframework"               %    "spring-core"              %   "3.0.7.RELEASE" notTransitive(),
             "org.springframework"               %    "spring-beans"             %   "3.0.7.RELEASE" notTransitive(),
             "joda-time"                         %    "joda-time"                %   "2.0",
+            "org.joda"                          %    "joda-convert"             %   "1.1",
             "javassist"                         %    "javassist"                %   "3.12.1.GA",
             "commons-lang"                      %    "commons-lang"             %   "2.6",
-            "com.ning"                          %    "async-http-client"        %   "1.7.0",
+            "com.ning"                          %    "async-http-client"        %   "1.7.0" notTransitive(),
             "oauth.signpost"                    %    "signpost-core"            %   "1.2.1.1",
             "com.codahale"                      %%   "jerkson"                  %   "0.5.0",
             "org.reflections"                   %    "reflections"              %   "0.9.6",
             "javax.servlet"                     %    "javax.servlet-api"        %   "3.0.1",
             "javax.transaction"                 %    "jta"                      %   "1.1",
             "tyrex"                             %    "tyrex"                    %   "1.0.1",
+            "jaxen"                             %    "jaxen"                    %   "1.1.3" notTransitive(),
             "org.specs2"                        %%   "specs2"                   %   "1.7.1"      %  "test",
             "net.sf.ehcache"                    %    "ehcache-core"             %   "2.5.0",
             "com.novocode"                      %    "junit-interface"          %   "0.8"        %  "test",
@@ -306,13 +299,13 @@ object PlayBuild extends Build {
             (file("src/play/src/main/scala/views") ** "*.scala").get ++ 
             (file("src/anorm/src/main/scala") ** "*.scala").get ++ 
             (file("src/play/target/scala-2.9.1/src_managed/main/views/html/helper") ** "*.scala").get
-          new Scaladoc(10, cs.scalac)("Play 2.0 Scala API", sourceFiles, classpath.map(_.data), file("../documentation/api/scala"), Nil, s.log)
+          new Scaladoc(10, cs.scalac)("Play " + BuildSettings.buildVersion + " Scala API", sourceFiles, classpath.map(_.data), file("../documentation/api/scala"), Nil, s.log)
 
           // Javadoc
           val javaSources = Seq(file("src/play/src/main/java"), file("src/play-test/src/main/java")).mkString(":")
           val javaApiTarget = file("../documentation/api/java")
           val javaClasspath = classpath.map(_.data).mkString(":")
-          """javadoc -windowtitle playframework -doctitle Play&nbsp;2.0&nbsp;Java&nbsp;API  -sourcepath %s -d %s -subpackages play -exclude play.api:play.core -classpath %s""".format(javaSources, javaApiTarget, javaClasspath) ! s.log
+          """javadoc -windowtitle playframework -doctitle Play&nbsp;""" + BuildSettings.buildVersion + """&nbsp;Java&nbsp;API  -sourcepath %s -d %s -subpackages play -exclude play.api:play.core -classpath %s""".format(javaSources, javaApiTarget, javaClasspath) ! s.log
 
         }
 

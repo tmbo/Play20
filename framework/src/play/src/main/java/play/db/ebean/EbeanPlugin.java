@@ -59,6 +59,7 @@ public class EbeanPlugin extends Plugin {
                     load = load.trim();
                     if(load.endsWith(".*")) {
                         classes.addAll(application.getTypesAnnotatedWith(load.substring(0, load.length()-2), javax.persistence.Entity.class));
+                        classes.addAll(application.getTypesAnnotatedWith(load.substring(0, load.length()-2), javax.persistence.Embeddable.class));
                     } else {
                         classes.add(load);
                     }
@@ -79,7 +80,7 @@ public class EbeanPlugin extends Plugin {
                 
                 // DDL
                 if(!application.isProd()) {
-                    boolean evolutionsEnabled = !"disabled".equals(application.configuration().getString("evolutions"));
+                    boolean evolutionsEnabled = !"disabled".equals(application.configuration().getString("evolutionplugin"));
                     if(evolutionsEnabled) {
                         String evolutionScript = generateEvolutionScript(servers.get(key), config);
                         if(evolutionScript != null) {
