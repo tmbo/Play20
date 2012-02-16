@@ -10,6 +10,9 @@ import akka.util.duration._
 import play.api._
 import play.api.mvc._
 
+/**
+ * provides source code to be displayed on error pages
+ */
 trait SourceMapper {
 
   def sourceOf(className: String): Option[File]
@@ -28,12 +31,19 @@ trait SourceMapper {
 
 }
 
+/**
+ * generic layout for initialized Applications
+ */
 trait ApplicationProvider {
   def path: File
   def get: Either[Throwable, Application]
   def handleWebCommand(requestHeader: play.api.mvc.RequestHeader): Option[Result] = None
 }
 
+/**
+ * creates and initializes an Application 
+ * @param applicationPath location of an Application
+ */
 class StaticApplication(applicationPath: File) extends ApplicationProvider {
 
   val application = new Application(applicationPath, this.getClass.getClassLoader, None, Mode.Prod)
@@ -44,6 +54,10 @@ class StaticApplication(applicationPath: File) extends ApplicationProvider {
   def path = applicationPath
 }
 
+/**
+ * wraps and starts a fake application (used in tests)
+ * @param application fake Application
+ */
 class TestApplication(application: Application) extends ApplicationProvider {
 
   Play.start(application)
@@ -52,6 +66,10 @@ class TestApplication(application: Application) extends ApplicationProvider {
   def path = application.path
 }
 
+/**
+ * generic interface that helps the communication between a Play Application 
+ * and the underlying SBT infrastructre
+ */
 trait SBTLink {
   def reload: Either[Throwable, Option[ClassLoader]]
   def findSource(className: String): Option[File]
@@ -63,6 +81,9 @@ trait SBTLink {
   def markdownToHtml(markdown: String, link: String => (String, String)): String
 }
 
+/**
+ * represents an application that can be reloaded in Dev Mode
+ */
 class ReloadableApplication(sbtLink: SBTLink) extends ApplicationProvider {
 
   lazy val path = sbtLink.projectPath
@@ -136,6 +157,7 @@ class ReloadableApplication(sbtLink: SBTLink) extends ApplicationProvider {
     val resolveEvolutions = """/@evolutions/resolve/([a-zA-Z0-9_]+)/([0-9]+)""".r
 
     val documentation = """/@documentation""".r
+    val book = """/@documentation/Book""".r
     val apiDoc = """/@documentation/api/(.*)""".r
     val wikiResource = """/@documentation/resources/(.*)""".r
     val wikiPage = """/@documentation/([^/]*)""".r
@@ -172,6 +194,21 @@ class ReloadableApplication(sbtLink: SBTLink) extends ApplicationProvider {
 
         Some {
           Redirect("/@documentation/Home")
+        }
+
+      }
+      
+      case book() => {
+        
+        import scalax.file._
+
+        Some {
+           documentationHome.flatMap { home =>
+              Option(new java.io.File(home, "manual/book/Book")).filter(_.exists)
+            }.map { book =>
+              val pages = (book:Path).slurpString.split('\n').toSeq.map(_.trim)
+              Ok(views.html.play20.book(pages))
+            }.getOrElse(NotFound("Resource not found [Book]"))
         }
 
       }
