@@ -1,5 +1,6 @@
 package play.core.less
 
+import sbt.PlayExceptions.AssetCompilationException
 import java.io._
 import play.api._
 import scala.sys.process._
@@ -42,14 +43,14 @@ object LessCompiler {
         val line = """.*on line ([0-9]+).*""".r
 
         throw error match {
-          case msg @ line(l) => CompilationException(
+          case msg @ line(l) => AssetCompilationException(
+            Some(source),
             msg,
-            source,
-            Some(Integer.parseInt(l)),
+            Integer.parseInt(l),
             None)
-          case msg => CompilationException(
+          case msg => AssetCompilationException(
+            Some(source),
             msg,
-            source,
             None,
             None)
         }
@@ -57,12 +58,3 @@ object LessCompiler {
     }
   }
 }
-
-case class CompilationException(message: String, lessFile: File, atLine: Option[Int], atColumn: Option[Int]) extends PlayException(
-  "Compilation error", message) with PlayException.ExceptionSource {
-  def line = atLine
-  def position = atColumn
-  def input = Some(scalax.file.Path(lessFile))
-  def sourceName = Some(lessFile.getAbsolutePath)
-}
-

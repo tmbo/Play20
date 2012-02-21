@@ -343,6 +343,11 @@ exec java $* -cp "`dirname $0`/lib/*" """ + config.map(_ => "-Dconfig.file=`dirn
 
     ()
   }
+  
+  val playHash = TaskKey[String]("play-hash")
+  val playHashTask = (baseDirectory) map { base =>
+    ((base / "app" ** "*") +++ (base / "conf" ** "*") +++ (base / "public" ** "*")).get.map(_.lastModified).mkString(",").hashCode.toString
+  }
 
   // ----- Assets
 
@@ -606,7 +611,8 @@ exec java $* -cp "`dirname $0`/lib/*" """ + config.map(_ => "-Dconfig.file=`dirn
 
     val maybeNewState = Project.runTask(dependencyClasspath in Compile, state).get._2.toEither.right.map { dependencies =>
 
-      val classpath = dependencies.map(_.data.toURI.toURL).toArray
+      // All jar dependencies. They will not been reloaded and must be part of this top classloader
+      val classpath = dependencies.map(_.data.toURI.toURL).filter(_.toString.endsWith(".jar")).toArray
 
       /**
        * Create a temporary classloader to run the application.
