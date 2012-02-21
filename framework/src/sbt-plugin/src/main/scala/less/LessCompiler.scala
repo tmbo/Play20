@@ -40,13 +40,14 @@ object LessCompiler {
           case x if (x.size > 0) => x.last
           case _ => e.toString
         }
+        println("FEHLER: "+logger.error)
         val line = """.*on line ([0-9]+).*""".r
 
         throw error match {
           case msg @ line(l) => AssetCompilationException(
             Some(source),
             msg,
-            Integer.parseInt(l),
+            Some(Integer.parseInt(l)),
             None)
           case msg => AssetCompilationException(
             Some(source),
