@@ -40,7 +40,6 @@ object LessCompiler {
           case x if (x.size > 0) => x.last
           case _ => e.toString
         }
-        println("FEHLER: "+logger.error)
         val line = """.*on line ([0-9]+).*""".r
 
         throw error match {
