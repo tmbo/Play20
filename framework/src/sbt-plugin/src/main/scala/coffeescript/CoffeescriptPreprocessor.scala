@@ -6,6 +6,7 @@ import scala.util.matching.Regex
 object Patterns {
 
   val IdentifierCharPattern = "[a-zA-Z0-9_\\-]"
+  val NoIdentifierCharPattern = "[^a-zA-Z0-9_\\-]"
   val IdentifierPattern = IdentifierCharPattern + "+"
 
   val ParamPattern = "\\s*" + IdentifierPattern + "\\s*"
@@ -16,9 +17,7 @@ object Patterns {
       "[=:]\\s*\\(" +
       "((?:" + ParamPattern + ",)*" + ParamPattern + ")" + // param list
       "\\)" +
-      "\\s*\\->[ \\t]*\\n(" + // ->
-      "([ \\t]*\\n|\\1[ \\t]+.*?\\n)+" + //empty line or intended line (body of macro)
-      ")"
+      "\\s*\\->[ \\t]*\\n"
 
   val PreviousToMacroUsage = "(([ \\t]*).*?)"
 }
@@ -26,16 +25,23 @@ object Patterns {
 object CoffeescriptPreprocessor {
   import Patterns._
 
-  val MacroRx = new Regex( MacroPattern, "indent", "name", "params", "body" )
+  val MacroRx = new Regex( MacroPattern, "indent", "name", "params" )
 
   def processOneMakro( string: String ) = {
     for {
       m <- MacroRx.findFirstMatchIn( string )
     } yield {
-      val macro = Macro( m.group( "name" ), m.group( "params" ), m.group( "body" ) )
-      println( macro )
-      var content = m.before.toString() + m.after.toString()
 
+      val indent = m.group( "indent" )
+
+      val ( body, after ) = m.after.toString().split( "\n" ).span {
+        line =>
+          line.trim == "" || line.startsWith( indent + " " ) || line.startsWith( indent + "\t" )
+      }
+
+      val macro = Macro( m.group( "name" ), m.group( "params" ), body.mkString( "\n" ) )
+      //println( macro )
+      var content = m.before.toString() + after.mkString( "\n" )
       macro.process( content )
     }
   }
@@ -45,6 +51,7 @@ object CoffeescriptPreprocessor {
     var foundMacro = true
 
     while ( foundMacro ) {
+
       processOneMakro( result ) match {
         case Some( r ) =>
           result = r
@@ -52,15 +59,12 @@ object CoffeescriptPreprocessor {
           foundMacro = false
       }
     }
-
     result
   }
 }
 
 case class Macro( name: String, paramString: String, bodyString: String ) {
   import Patterns._
-
-  val body = outdentBlock( remTrailingEmptyLines( bodyString ).split( "\n" ).toList )
 
   val params = paramString match {
     case s if s != "" => s.split( "," ).map( _.trim )
@@ -71,14 +75,28 @@ case class Macro( name: String, paramString: String, bodyString: String ) {
 
   val macroRx = new Regex( PreviousToMacroUsage + name + "\\(" + multipleParams + "\\)" )
 
+  val paramsRx = params.map { p =>
+    ( "(" + NoIdentifierCharPattern + ")" + p + "(" + NoIdentifierCharPattern + ")" ).r
+  }
+
+  val body = outdentBlock( parametryFy( remTrailingEmptyLines( bodyString ) ).split( "\n" ).toList )
+
+  override def toString() =
+    "Macro(%s, '%s', \n%s)".format( name, paramString, body.mkString( "\n" ) )
+
+  def parametryFy( block: String ) =
+    paramsRx.zipWithIndex.foldLeft( block.replaceAll( "%", "%%" ) )( ( result, el ) => {
+      el._1.replaceAllIn( result, "$1%" + ( el._2 + 1 ) + "\\$s$2" )
+    } )
+
   def remTrailingEmptyLines( block: String ) =
-    ( "(^\\s*\\n) | (\\n\\s*$)".r ).replaceAllIn( block, "" )
+    ( "(^\\s*\\n)|(\\n\\s*$)".r ).replaceAllIn( block, "" )
 
   def outdentBlock( block: List[String] ) = {
     val indentRx = "\\s*".r
     block match {
       case h :: _ =>
-        val originalIndent = indentRx.findFirstIn( block.head ).get.size
+        val originalIndent = indentRx.findFirstIn( h ).get.size
         block.map { s =>
           if ( s.size >= originalIndent )
             s.substring( originalIndent )
@@ -101,27 +119,17 @@ case class Macro( name: String, paramString: String, bodyString: String ) {
 
   def process( s: String ) = {
     macroRx.replaceAllIn( s, matchObj => {
-      val paramMapping = params.zipWithIndex.map {
-        case ( p, i ) =>
-          val actual = matchObj.group( i + 3 )
-          val paramRx = ( "(?<!" + IdentifierPattern + ")" + p + "(?!" + IdentifierPattern + ")" ).r
-          paramRx -> actual
-      }.toMap
+      val actual = 3 to matchObj.groupCount map ( matchObj.group )
       val preMacro = matchObj.group( 1 )
-
       val additionalIndent = preMacro.trim() match {
         case "" => ""
         case _  => "\t"
       }
 
       val indent = matchObj.group( 2 ) + additionalIndent
+
       var result = preMacro + indentBlock( body, indent ).mkString( "\n" )
-      for {
-        ( param, actual ) <- paramMapping
-      } {
-        result = param.replaceAllIn( result, actual )
-      }
-      result
+      result.format( actual: _* ).replaceAll( "%%", "%" )
     } )
   }
 }
