@@ -17,7 +17,7 @@ object Patterns {
       "[=:]\\s*\\(" +
       "((?:" + ParamPattern + ",)*" + ParamPattern + ")" + // param list
       "\\)" +
-      "\\s*\\->[ \\t]*\\n"
+      "\\s*\\->[ \\t]*"
 
   val PreviousToMacroUsage = "(([ \\t]*).*?)"
 }
