@@ -27,7 +27,9 @@ object CoffeescriptCompiler {
   def compile(source: File, options: Seq[String]): String = {
     val logger = new ExecLogger
     try {
-      "coffee -scb" #< source !! logger
+      val preprocessorOutput = CoffeescriptPreprocessor.process( source )
+      val pipeSource = new ByteArrayInputStream(preprocessorOutput.getBytes())
+      "coffee -scb" #< pipeSource !! logger
     } catch {
       case e: java.lang.RuntimeException => {
         val error = logger.error match {
