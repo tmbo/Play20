@@ -84,7 +84,7 @@ private[server] class PlayDefaultUpstreamHandler(server: Server, allChannels: De
                 Logger("play").trace("Sending simple result: " + r)
 
                 // Set response headers
-                headers.foreach {
+                headers.filterNot(_ == (CONTENT_LENGTH,"-1")).foreach {
 
                   // Fix a bug for Set-Cookie header. 
                   // Multiple cookies could be merged in a single header
@@ -108,7 +108,6 @@ private[server] class PlayDefaultUpstreamHandler(server: Server, allChannels: De
                     if (e.getChannel.isConnected())
                       NettyPromise(e.getChannel.write(ChannelBuffers.wrappedBuffer(r.writeable.transform(x))))
                         .extend1{ case Redeemed(()) => () ; case Thrown(ex) => Logger("play").debug(ex.toString)}
-                        .map(_ => ())
                     else Promise.pure(())
                   }
 
@@ -117,7 +116,6 @@ private[server] class PlayDefaultUpstreamHandler(server: Server, allChannels: De
                       if (e.getChannel.isConnected())
                         NettyPromise( e.getChannel.write(nettyResponse))
                         .extend1{ case Redeemed(()) => () ; case Thrown(ex) => Logger("play").debug(ex.toString)}
-                        .map(_ => ())
                       else Promise.pure(()))((_, e: r.BODY_CONTENT) => writer(e))
 
                     Enumeratee.breakE[r.BODY_CONTENT](_ => !e.getChannel.isConnected()).transform(writeIteratee).mapDone { _ =>
@@ -180,7 +178,6 @@ private[server] class PlayDefaultUpstreamHandler(server: Server, allChannels: De
                     if (e.getChannel.isConnected())
                       NettyPromise(e.getChannel.write(new DefaultHttpChunk(ChannelBuffers.wrappedBuffer(r.writeable.transform(x)))))
                         .extend1{ case Redeemed(()) => () ; case Thrown(ex) => Logger("play").debug(ex.toString)}
-                        .map(_ => ())
                     else Promise.pure(())
                   }
 
@@ -189,7 +186,6 @@ private[server] class PlayDefaultUpstreamHandler(server: Server, allChannels: De
                       if (e.getChannel.isConnected())
                         NettyPromise( e.getChannel.write(nettyResponse))
                         .extend1{ case Redeemed(()) => () ; case Thrown(ex) => Logger("play").debug(ex.toString)}
-                        .map(_ => ())
                       else Promise.pure(()))((_, e: r.BODY_CONTENT) => writer(e))
 
 

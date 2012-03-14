@@ -180,9 +180,8 @@ object PlayBuild extends Build {
             "ch.qos.logback"                    %    "logback-core"             %   "1.0.0",
             "ch.qos.logback"                    %    "logback-classic"          %   "1.0.0",
             "com.github.scala-incubator.io"     %%   "scala-io-file"            %   "0.2.0",
-            "com.typesafe.akka"                 %    "akka-actor"               %   "2.0-RC2",
-            "com.typesafe.akka"                 %    "akka-slf4j"               %   "2.0-RC2",
-            "com.typesafe.config"               %    "config"                   %   "0.2.1",
+            "com.typesafe.akka"                 %    "akka-actor"               %   "2.0",
+            "com.typesafe.akka"                 %    "akka-slf4j"               %   "2.0",
             "com.google.guava"                  %    "guava"                    %   "10.0.1",
             
             ("org.avaje"                        %    "ebean"                    %   "2.7.3" notTransitive())
@@ -254,7 +253,7 @@ object PlayBuild extends Build {
             "org.specs2"                        %%   "specs2"                   %   "1.7.1"      %  "test",
             "com.novocode"                      %    "junit-interface"          %   "0.8"        %  "test",
             
-            "fr.javafreelance.fluentlenium"     %    "fluentlenium"             %   "0.5.3"      %  "test"
+            "org.fluentlenium"     %    "fluentlenium-festassert"             %   "0.5.6"      %  "test"
         )
 
         val sbtDependencies = Seq(
@@ -299,7 +298,7 @@ object PlayBuild extends Build {
             "org.specs2"                        %%   "specs2"                   %   "1.7.1",
             "com.novocode"                      %    "junit-interface"          %   "0.8",
             
-            "fr.javafreelance.fluentlenium"     %    "fluentlenium"             %   "0.5.3"
+            "org.fluentlenium"     %    "fluentlenium-festassert"             %   "0.5.6"
         )
 
     }
