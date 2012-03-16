@@ -375,7 +375,7 @@ exec java $* -cp "`dirname $0`/lib/*" """ + config.map(_ => "-Dconfig.file=`dirn
         previousRelation._2s.foreach(IO.delete)
         
   		val t = System.currentTimeMillis()
-        val generated = (files x relativeTo(Seq(src / "assets"))).par.flatMap {
+        val generated = (files x relativeTo(Seq(src / "assets"))).flatMap {
           case (sourceFile, name) => {
             val (debug, min, dependencies) = compile(sourceFile, options)
             val out = new File(resources, "public/" + naming(name, false))
@@ -386,7 +386,7 @@ exec java $* -cp "`dirname $0`/lib/*" """ + config.map(_ => "-Dconfig.file=`dirn
               dependencies.map(_ -> outMin)
             }.getOrElse(Nil)
           }
-        }.seq
+        }
           
         Sync.writeInfo(cacheFile,
           Relation.empty[File, File] ++ generated,

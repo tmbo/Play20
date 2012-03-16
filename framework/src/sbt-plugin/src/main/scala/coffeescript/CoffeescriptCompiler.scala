@@ -26,8 +26,14 @@ object CoffeescriptCompiler {
 
   def compile(source: File, options: Seq[String]): String = {
     val logger = new ExecLogger
+    var preprocessorFile: Option[File] = None
     try {
       val preprocessorOutput = CoffeescriptPreprocessor.process( source )
+      preprocessorFile = Some(File.createTempFile("prepoutput", ".coffee"))
+      val out = new PrintWriter( preprocessorFile.get )
+      try{ 
+        out.print( preprocessorOutput ) 
+      } finally { out.close }
       val pipeSource = new ByteArrayInputStream(preprocessorOutput.getBytes())
       "coffee -scb" #< pipeSource !! logger
     } catch {
@@ -41,10 +47,12 @@ object CoffeescriptCompiler {
         throw error match {
           case msg @ line(l) => CompilationException(
             msg,
+            preprocessorFile getOrElse source,
             source,
             Some(Integer.parseInt(l)))
           case msg => CompilationException(
             msg,
+            preprocessorFile getOrElse source,
             source,
             None)
         }
@@ -53,13 +61,13 @@ object CoffeescriptCompiler {
   }
 }
 
-case class CompilationException(message: String, coffeeFile: File, atLine: Option[Int]) extends PlayException(
+case class CompilationException(message: String, preproOutput: File, coffeeFile: File, atLine: Option[Int]) extends PlayException(
   "Compilation error", message) with PlayException.ExceptionSource {
   def line = atLine
 
   def position = None
 
-  def input = Some(scalax.file.Path(coffeeFile))
+  def input = Some(scalax.file.Path(preproOutput))
 
   def sourceName = Some(coffeeFile.getAbsolutePath)
 }
