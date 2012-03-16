@@ -8,6 +8,10 @@ import akka.actor.Actor._
 
 import java.util.concurrent.{ TimeUnit }
 
+import scala.collection.mutable.Builder
+import scala.collection._
+import scala.collection.generic.CanBuildFrom
+
 sealed trait PromiseValue[+A] {
   def isDefined = this match { case Waiting => false; case _ => true }
 }
@@ -192,7 +196,12 @@ class STMPromise[A] extends Promise[A] with Redeemable[A] {
     val result = new STMPromise[B]()
     this.addAction(p => p.value match {
       case Redeemed(a) =>
-       (try{ f(a)}catch{case e => {println("wow! "+e); throw e}}).extend(ip => ip.value match {
+       (try{ 
+         f(a)
+       } catch{
+         case e =>
+           Promise.pure[B](throw e)
+       }).extend(ip => ip.value match {
           case Redeemed(a) => result.redeem(a)
           case Thrown(e) => result.redeem(throw e)
 
@@ -246,7 +255,7 @@ object PurePromise {
 
 object Promise {
 
-  def pure[A](a: A): Promise[A] = PurePromise(a)
+  def pure[A](a: => A): Promise[A] = PurePromise(a)
 
   def apply[A](): Promise[A] with Redeemable[A] = new STMPromise[A]()
 
@@ -260,8 +269,10 @@ object Promise {
     p
   }
 
-  def sequence[A](promises: Seq[Promise[A]]): Promise[Seq[A]] = {
-    promises.foldLeft(Promise.pure(Seq[A]()))((s, p) => s.flatMap(s => p.map(a => s :+ a)))
+  def sequence[A](in: Option[Promise[A]]): Promise[Option[A]] = in.map { p => p.map{ v => Some(v)}}.getOrElse { Promise.pure(None)}
+  
+  def sequence[B, M[_]](in: M[Promise[B]])(implicit toTraversableLike : M[Promise[B]] => TraversableLike[Promise[B], M[Promise[B]]], cbf: CanBuildFrom[M[Promise[B]], B, M[B]]): Promise[M[B]] = { 
+    toTraversableLike(in).foldLeft(Promise.pure(cbf(in)))((fr, fa : Promise[B]) => for (r <- fr; a <- fa) yield (r += a)).map(_.result)
   }
 }
 
