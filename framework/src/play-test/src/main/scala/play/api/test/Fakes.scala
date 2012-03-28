@@ -50,7 +50,18 @@ case class FakeRequest[A](method: String, uri: String, headers: FakeHeaders, bod
       headers.data ++ newHeaders.groupBy(_._1).mapValues(_.map(_._2))
     ))
   }
-
+  
+  /**
+   *
+   * Constructs a new request with additional session.
+   *
+   */
+  def withSession( newSessions: ( String, String )* ): FakeRequest[A] = {
+    withHeaders( play.api.http.HeaderNames.COOKIE ->
+      Cookies.merge( headers.get( play.api.http.HeaderNames.COOKIE ).getOrElse( "" ),
+        Seq( Session.encodeAsCookie( new Session( session.data ++ newSessions ) ) ) ) )
+  }
+  
   /**
    * Set a Form url encoded body to this request.
    */
