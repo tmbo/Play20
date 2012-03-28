@@ -2,14 +2,12 @@ package play.libs;
 
 import com.ning.http.client.AsyncHttpClient;
 import com.ning.http.client.AsyncCompletionHandler;
-import com.ning.http.client.Request;
+import com.ning.http.client.PerRequestConfig;
 import com.ning.http.client.RequestBuilderBase;
 import com.ning.http.client.Realm.AuthScheme;
 import com.ning.http.client.Realm.RealmBuilder;
 import com.ning.http.client.FluentStringsMap;
 
-import java.lang.reflect.Method;
-import java.lang.reflect.Type;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.File;
@@ -19,13 +17,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.ArrayList;
 
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
-
 import org.w3c.dom.Document;
-import org.xml.sax.InputSource;
 
-import play.libs.Scala;
 import play.libs.F.Promise;
 
 import org.codehaus.jackson.JsonNode;
@@ -90,10 +83,10 @@ public class WS {
             } catch (IOException exception) {
                 scalaPromise.throwing(exception);
             }
-            return new Promise(scalaPromise);
+            return new Promise<Response>(scalaPromise);
         }
     }
-    
+
     /**
      * provides the User facing API for building WS request.
      */
@@ -106,6 +99,9 @@ public class WS {
         private String username = null;
         private String password = null;
         private AuthScheme scheme = null;
+
+        private int timeout = 0;
+        private Boolean followRedirects = null;
 
         public WSRequestHolder(String url) {
             this.url = url;
@@ -158,6 +154,26 @@ public class WS {
             this.username = username;
             this.password = password;
             this.scheme = scheme;
+            return this;
+        }
+
+        /**
+         * Sets whether redirects (301, 302) should be followed automatically
+         *
+         * @param followRedirect
+         */
+        public WSRequestHolder setFollowRedirects(Boolean followRedirects) {
+            this.followRedirects = followRedirects;
+            return this;
+        }
+
+        /**
+         * Sets the request timeout in milliseconds
+         *
+         * @param timeout
+         */
+        public WSRequestHolder setTimeout(int timeout) {
+            this.timeout = timeout;
             return this;
         }
 
@@ -247,6 +263,14 @@ public class WS {
             WSRequest req = new WSRequest(method).setUrl(url)
                                                  .setHeaders(headers)
                                                  .setQueryParameters(new FluentStringsMap(queryParameters));
+            if (this.timeout > 0) {
+                PerRequestConfig config = new PerRequestConfig();
+                config.setRequestTimeoutInMs(this.timeout);
+                req.setPerRequestConfig(config);
+            }
+            if (this.followRedirects != null) {
+                req.setFollowRedirects(this.followRedirects);
+            }
             if (this.username != null && this.password != null && this.scheme != null)
                 req.auth(this.username, this.password, this.scheme);
             return req.execute();
@@ -257,6 +281,14 @@ public class WS {
                                                  .setUrl(url)
                                                  .setHeaders(headers)
                                                  .setQueryParameters(new FluentStringsMap(queryParameters));
+            if (this.timeout > 0) {
+                PerRequestConfig config = new PerRequestConfig();
+                config.setRequestTimeoutInMs(this.timeout);
+                req.setPerRequestConfig(config);
+            }
+            if (this.followRedirects != null) {
+                req.setFollowRedirects(this.followRedirects);
+            }
             if (this.username != null && this.password != null && this.scheme != null)
                 req.auth(this.username, this.password, this.scheme);
             return req.execute();
@@ -267,6 +299,14 @@ public class WS {
                                                  .setUrl(url)
                                                  .setHeaders(headers)
                                                  .setQueryParameters(new FluentStringsMap(queryParameters));
+            if (this.timeout > 0) {
+                PerRequestConfig config = new PerRequestConfig();
+                config.setRequestTimeoutInMs(this.timeout);
+                req.setPerRequestConfig(config);
+            }
+            if (this.followRedirects != null) {
+                req.setFollowRedirects(this.followRedirects);
+            }
             if (this.username != null && this.password != null && this.scheme != null)
                 req.auth(this.username, this.password, this.scheme);
             return req.execute();
@@ -277,6 +317,14 @@ public class WS {
                                                  .setUrl(url)
                                                  .setHeaders(headers)
                                                  .setQueryParameters(new FluentStringsMap(queryParameters));
+            if (this.timeout > 0) {
+                PerRequestConfig config = new PerRequestConfig();
+                config.setRequestTimeoutInMs(this.timeout);
+                req.setPerRequestConfig(config);
+            }
+            if (this.followRedirects != null) {
+                req.setFollowRedirects(this.followRedirects);
+            }
             if (this.username != null && this.password != null && this.scheme != null)
                 req.auth(this.username, this.password, this.scheme);
             return req.execute();
@@ -301,6 +349,13 @@ public class WS {
          */
         public int getStatus() {
             return ahcResponse.getStatusCode();
+        }
+
+        /**
+         * Get the HTTP status text of the response
+         */
+        public String getStatusText() {
+            return ahcResponse.getStatusText();
         }
 
         /**

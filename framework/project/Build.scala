@@ -19,8 +19,7 @@ object PlayBuild extends Build {
             publishArtifact in (Compile, packageDoc) := false,
             publishArtifact in (Compile, packageSrc) := false,
             unmanagedJars in Compile += compilerJar,
-            scalacOptions ++= Seq("-Xlint","-deprecation", "-unchecked","-encoding", "utf8"),
-            javacOptions ++= Seq("-encoding", "utf8"),
+            scalacOptions ++= Seq("-encoding", "UTF-8", "-Xlint","-deprecation", "-unchecked"),
             resolvers += typesafe
         )
     ).settings(com.typesafe.sbtscalariform.ScalariformPlugin.defaultScalariformSettings: _*)
@@ -31,10 +30,9 @@ object PlayBuild extends Build {
         settings = buildSettings ++ Seq(
             libraryDependencies := anormDependencies,
             publishTo := Some(playRepository),
-            scalacOptions ++= Seq("-encoding", "utf8"),
-            javacOptions ++= Seq("-encoding", "utf8"),
+            scalacOptions ++= Seq("-encoding", "UTF-8", "-Xlint","-deprecation", "-unchecked"),
             publishArtifact in (Compile, packageDoc) := false,
-            publishArtifact in (Compile, packageSrc) := false
+            publishArtifact in (Compile, packageSrc) := true
         )
     ).settings(com.typesafe.sbtscalariform.ScalariformPlugin.defaultScalariformSettings: _*)
 
@@ -45,10 +43,10 @@ object PlayBuild extends Build {
             libraryDependencies := runtime,
             sourceGenerators in Compile <+= sourceManaged in Compile map PlayVersion,
             publishTo := Some(playRepository),
-            scalacOptions ++= Seq("-Xlint","-deprecation", "-unchecked","-encoding", "utf8"),
+            scalacOptions ++= Seq("-encoding", "UTF-8", "-Xlint","-deprecation", "-unchecked"),
             javacOptions ++= Seq("-encoding", "utf8"),
             publishArtifact in (Compile, packageDoc) := false,
-            publishArtifact in (Compile, packageSrc) := false,
+            publishArtifact in (Compile, packageSrc) := true,
             resolvers += typesafe,
             sourceGenerators in Compile <+= (dependencyClasspath in TemplatesProject in Runtime, packageBin in TemplatesProject in Compile, scalaSource in Compile, sourceManaged in Compile, streams) map ScalaTemplates,
             compile in (Compile) <<= PostCompile
@@ -61,10 +59,10 @@ object PlayBuild extends Build {
       settings = buildSettings ++ Seq(
         libraryDependencies := testDependencies,
         publishTo := Some(playRepository),
-        scalacOptions ++= Seq("-deprecation","-Xcheckinit", "-encoding", "utf8"),
-        javacOptions ++= Seq("-encoding", "utf8"),
+        scalacOptions ++= Seq("-encoding", "UTF-8", "-Xlint","-deprecation", "-unchecked"),
+        javacOptions  ++= Seq("-encoding", "utf8","-Xlint:unchecked", "-Xlint:deprecation"),
         publishArtifact in (Compile, packageDoc) := false,
-        publishArtifact in (Compile, packageSrc) := false,
+        publishArtifact in (Compile, packageSrc) := true,
         resolvers += typesafe
       )
     ).settings(com.typesafe.sbtscalariform.ScalariformPlugin.defaultScalariformSettings: _*).dependsOn(PlayProject)
@@ -79,8 +77,7 @@ object PlayBuild extends Build {
         addSbtPlugin("com.typesafe.sbteclipse" % "sbteclipse-core" % "2.0.0"),
         unmanagedJars in Compile ++= sbtJars,
         publishTo := Some(playIvyRepository),
-        scalacOptions ++= Seq("-Xlint", "-deprecation", "-unchecked","-encoding", "utf8"),
-        javacOptions ++= Seq("-encoding", "utf8"),
+        scalacOptions ++= Seq("-encoding", "UTF-8", "-Xlint","-deprecation", "-unchecked"),
         publishArtifact in (Compile, packageDoc) := false,
         publishArtifact in (Compile, packageSrc) := false,
         resolvers += typesafe
@@ -95,10 +92,9 @@ object PlayBuild extends Build {
         sourceGenerators in Compile <+= sourceManaged in Compile map PlayVersion,
         unmanagedJars in Compile ++=  sbtJars,
         publishTo := Some(playRepository),
-        scalacOptions ++= Seq("-deprecation","-Xcheckinit", "-encoding", "utf8"),
-        javacOptions ++= Seq("-encoding", "utf8"),
+        scalacOptions ++= Seq("-encoding", "UTF-8", "-Xlint","-deprecation", "-unchecked"),
         publishArtifact in (Compile, packageDoc) := false,
-        publishArtifact in (Compile, packageSrc) := false,
+        publishArtifact in (Compile, packageSrc) := true,
         resolvers += typesafe
       )
     ).settings(com.typesafe.sbtscalariform.ScalariformPlugin.defaultScalariformSettings: _*)
@@ -260,7 +256,7 @@ object PlayBuild extends Build {
             "com.typesafe.config"               %    "config"                   %   "0.2.1",
             "rhino"                             %    "js"                       %   "1.7R2",
             
-            ("com.google.javascript"            %    "closure-compiler"         %   "r1741" notTransitive())
+            ("com.google.javascript"            %    "closure-compiler"         %   "r1810" notTransitive())
               .exclude("args4j", "args4j")
               .exclude("com.google.guava", "guava")
               .exclude("org.json", "json")

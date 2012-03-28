@@ -10,7 +10,7 @@ import scala.annotation.implicitNotFound
 @implicitNotFound(
   "No Json deserializer found for type ${T}. Try to implement an implicit Reads or Format for this type."
 )
-trait Reads[T] {
+trait Reads[+T] {
 
   /**
    * Convert the JsValue into a T
@@ -76,6 +76,16 @@ trait DefaultReads {
     def reads(json: JsValue) = json match {
       case JsNumber(n) => n.toDouble
       case _ => throw new RuntimeException("Double expected")
+    }
+  }
+  
+  /**
+   * Deserializer for BigDecimal types.
+   */
+  implicit object BigDecimalReads extends Reads[BigDecimal] {
+    def reads(json: JsValue) = json match {
+      case JsNumber(n) => n
+      case _ => throw new RuntimeException("Number expected")
     }
   }
 

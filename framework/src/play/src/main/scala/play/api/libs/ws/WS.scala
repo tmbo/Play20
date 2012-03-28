@@ -5,15 +5,16 @@ import play.api.libs.iteratee._
 import play.api.libs.iteratee.Input._
 import play.api.libs.json._
 import play.api.http.{ Writeable, ContentTypeOf }
-
 import com.ning.http.client.{
   AsyncHttpClient,
+  AsyncHttpClientConfig,
   RequestBuilderBase,
   FluentCaseInsensitiveStringsMap,
   HttpResponseBodyPart,
   HttpResponseHeaders,
   HttpResponseStatus,
-  Response => AHCResponse
+  Response => AHCResponse,
+  PerRequestConfig
 }
 
 /**
@@ -36,14 +37,23 @@ object WS {
   /**
    * The underlying HTTP client.
    */
-  lazy val client = new AsyncHttpClient()
+  lazy val client = {
+    import play.api.Play.current
+    val config = new AsyncHttpClientConfig.Builder()
+      .setConnectionTimeoutInMs(current.configuration.getMilliseconds("ws.timeout").getOrElse(120000L).toInt)
+      .setFollowRedirects(current.configuration.getBoolean("ws.followRedirects").getOrElse(true))
+    current.configuration.getString("ws.useragent").map { useragent =>
+      config.setUserAgent(useragent)
+    }
+    new AsyncHttpClient(config.build())
+  }
 
   /**
    * Prepare a new request. You can then construct it by chaining calls.
    *
    * @param url the URL to request
    */
-  def url(url: String): WSRequestHolder = WSRequestHolder(url, Map(), Map(), None, None)
+  def url(url: String): WSRequestHolder = WSRequestHolder(url, Map(), Map(), None, None, None, None)
 
   /**
    * A WS Request.
@@ -62,9 +72,9 @@ object WS {
     _auth.map(data => auth(data._1, data._2, data._3)).getOrElse({})
 
     /**
-     * Add http auth headers
+     * Add http auth headers. Defaults to HTTP Basic.
      */
-    private def auth(username: String, password: String, scheme: AuthScheme): WSRequest = {
+    private def auth(username: String, password: String, scheme: AuthScheme = AuthScheme.BASIC): WSRequest = {
       this.setRealm((new RealmBuilder())
         .setScheme(scheme)
         .setPrincipal(username)
@@ -247,7 +257,9 @@ object WS {
       headers: Map[String, Seq[String]],
       queryString: Map[String, String],
       calc: Option[SignatureCalculator],
-      auth: Option[Tuple3[String, String, AuthScheme]]) {
+      auth: Option[Tuple3[String, String, AuthScheme]],
+      followRedirects: Option[Boolean],
+      timeout: Option[Int]) {
 
     /**
      * sets the signature calculator for the request
@@ -279,6 +291,18 @@ object WS {
      */
     def withQueryString(parameters: (String, String)*): WSRequestHolder =
       this.copy(queryString = parameters.foldLeft(queryString)((m, param) => m + param))
+
+    /**
+     * Sets whether redirects (301, 302) should be followed automatically
+     */
+    def withFollowRedirects(follow: Boolean): WSRequestHolder =
+      this.copy(followRedirects = Some(follow))
+
+    /**
+     * Sets the request timeout in milliseconds
+     */
+    def withTimeout(timeout: Int): WSRequestHolder =
+      this.copy(timeout = Some(timeout))
 
     /**
      * performs a get with supplied body
@@ -330,16 +354,32 @@ object WS {
      */
     def options(): Promise[Response] = prepare("OPTIONS").execute
 
-    private def prepare(method: String) =
-      new WSRequest(method, auth, calc).setUrl(url)
+    private def prepare(method: String) = {
+      val request = new WSRequest(method, auth, calc).setUrl(url)
         .setHeaders(headers)
         .setQueryString(queryString)
+      followRedirects.map(request.setFollowRedirects(_))
+      timeout.map { t:Int =>
+        val config = new PerRequestConfig()
+        config.setRequestTimeoutInMs(t)
+        request.setPerRequestConfig(config)
+      }
+      request
+    }
 
-    private def prepare[T](method: String, body: T)(implicit wrt: Writeable[T], ct: ContentTypeOf[T]) =
-      new WSRequest(method, auth, calc).setUrl(url)
+    private def prepare[T](method: String, body: T)(implicit wrt: Writeable[T], ct: ContentTypeOf[T]) = {
+      val request = new WSRequest(method, auth, calc).setUrl(url)
         .setHeaders(Map("Content-Type" -> Seq(ct.mimeType.getOrElse("text/plain"))) ++ headers)
         .setQueryString(queryString)
         .setBody(wrt.transform(body))
+      followRedirects.map(request.setFollowRedirects(_))
+      timeout.map { t:Int =>
+        val config = new PerRequestConfig()
+        config.setRequestTimeoutInMs(t)
+        request.setPerRequestConfig(config)
+      }
+      request
+    }
 
   }
 }
@@ -360,7 +400,12 @@ case class Response(ahcResponse: AHCResponse) {
   /**
    * The response status code.
    */
-  def status: Int = ahcResponse.getStatusCode();
+  def status: Int = ahcResponse.getStatusCode()
+
+  /**
+   * The response status message.
+   */
+  def statusText: String = ahcResponse.getStatusText()
 
   /**
    * Get a response header.

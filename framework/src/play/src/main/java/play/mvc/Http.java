@@ -36,13 +36,6 @@ public class Http {
         private final Session session;
         private final Flash flash;
         
-        private Context() {
-            request = null;
-            response = null;
-            session = null;
-            flash = null;
-        }
-        
         
         /**
          * Creates a new HTTP context.
@@ -129,6 +122,13 @@ public class Http {
              */
             public static play.i18n.Lang lang() {
                 return play.i18n.Lang.preferred(Context.current().request().acceptLanguages());
+            }
+            
+            /**
+             * Returns the current context.
+             */
+            public static Context ctx() {
+                return Context.current();
             }
             
         }
@@ -384,6 +384,7 @@ public class Http {
         /**
          * Cast this RequestBody as T if possible.
          */
+        @SuppressWarnings("unchecked")
         public <T> T as(Class<T> tType) {
             if(this.getClass().isAssignableFrom(tType)) {
                 return (T)this;

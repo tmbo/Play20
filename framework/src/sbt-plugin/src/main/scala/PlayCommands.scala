@@ -95,12 +95,20 @@ trait PlayCommands {
   }
 
   val playCopyAssets = TaskKey[Seq[(File, File)]]("play-copy-assets")
-  val playCopyAssetsTask = (baseDirectory, managedResources in Compile, resourceManaged in Compile, playAssetsDirectories, classDirectory in Compile, cacheDirectory, streams) map { (b, resources, resourcesDirectories, r, t, c, s) =>
+  val playCopyAssetsTask = (baseDirectory, managedResources in Compile, resourceManaged in Compile, playAssetsDirectories, playExternalAssets, classDirectory in Compile, cacheDirectory, streams) map { (b, resources, resourcesDirectories, r, externals, t, c, s) =>
     val cacheFile = c / "copy-assets"
     
-    val mappings:Seq[(java.io.File,java.io.File)] = (r.map(_ ***).reduceLeft(_ +++ _).filter(_.isFile) x relativeTo(b +: r.filterNot(_.getAbsolutePath.startsWith(b.getAbsolutePath))) map {
+    val mappings = (r.map(_ ***).foldLeft(PathFinder.empty)(_ +++ _).filter(_.isFile) x relativeTo(b +: r.filterNot(_.getAbsolutePath.startsWith(b.getAbsolutePath))) map {
       case (origin, name) => (origin, new java.io.File(t, name))
     }) ++ (resources x rebase(resourcesDirectories, t))
+    
+    val externalMappings = externals.map {
+      case (root, paths, common) => {
+        paths(root) x relativeTo(root :: Nil) map {
+          case (origin, name) => (origin, new java.io.File(t, common + "/" + name))
+        }
+      }
+    }.foldLeft(Seq.empty[(java.io.File, java.io.File)])(_ ++ _)
 
     /*
     Disable GZIP Generation for this release.
@@ -119,7 +127,7 @@ trait PlayCommands {
 
     val assetsMapping = mappings ++ gzipped*/
 
-    val assetsMapping = mappings
+    val assetsMapping = mappings ++ externalMappings
 
     s.log.debug("Copy play resource mappings: " + mappings.mkString("\n\t", "\n\t", ""))
 
@@ -145,11 +153,10 @@ trait PlayCommands {
   }
 
   val dist = TaskKey[File]("dist", "Build the standalone application package")
-  val distTask = (baseDirectory, playPackageEverything, dependencyClasspath in Runtime, target, normalizedName, version) map { (root, packaged, dependencies, target, id, version) =>
+  val distTask = (distDirectory, baseDirectory, playPackageEverything, dependencyClasspath in Runtime, target, normalizedName, version) map { (dist, root, packaged, dependencies, target, id, version) =>
 
     import sbt.NameFilter._
 
-    val dist = root / "dist"
     val packageName = id + "-" + version
     val zip = dist / (packageName + ".zip")
 
@@ -201,6 +208,15 @@ exec java $* -cp "`dirname $0`/lib/*" """ + config.map(_ => "-Dconfig.file=`dirn
    * @param mainLang mainly scala or java?
    */
   def eclipseCommandSettings(mainLang: String) = {
+    val settingsDir = new File(".settings")
+    val coreSettings = new File(settingsDir.toString+java.io.File.separator+"org.eclipse.core.resources.prefs")
+    if (mainLang == JAVA && coreSettings.exists == false) {
+      IO.createDirectory(settingsDir)
+      IO.write(coreSettings,
+      """|eclipse.preferences.version=1
+         |encoding/<project>=UTF-8""".stripMargin
+      )  
+    }
     import com.typesafe.sbteclipse.core._
     import com.typesafe.sbteclipse.core.EclipsePlugin._
     def transformerFactory =
@@ -210,6 +226,7 @@ exec java $* -cp "`dirname $0`/lib/*" """ + config.map(_ => "-Dconfig.file=`dirn
             (entries: Seq[EclipseClasspathEntry]) => entries :+ EclipseClasspathEntry.Lib(ct + java.io.File.separator + "classes_managed")
           )
       }
+
     EclipsePlugin.eclipseSettings ++ Seq(EclipseKeys.commandName := "eclipsify",
       EclipseKeys.createSrc := EclipseCreateSrc.Default,
       EclipseKeys.preTasks := Seq(compile in Compile),
@@ -348,8 +365,10 @@ exec java $* -cp "`dirname $0`/lib/*" """ + config.map(_ => "-Dconfig.file=`dirn
   }
 
   val playHash = TaskKey[String]("play-hash")
-  val playHashTask = (baseDirectory) map { base =>
-    ((base / "app" ** "*") +++ (base / "conf" ** "*") +++ (base / "public" ** "*")).get.map(_.lastModified).mkString(",").hashCode.toString
+  val playHashTask = (baseDirectory, playExternalAssets) map { (base, externalAssets) =>
+    ((base / "app" ** "*") +++ (base / "conf" ** "*") +++ (base / "public" ** "*") +++ externalAssets.map {
+      case (root, paths, _) => paths(root)
+    }.foldLeft(PathFinder.empty)(_ +++ _)).get.map(_.lastModified).mkString(",").hashCode.toString
   }
 
   // ----- Assets
@@ -587,17 +606,22 @@ exec java $* -cp "`dirname $0`/lib/*" """ + config.map(_ => "-Dconfig.file=`dirn
     state
   }
 
-  private def filterArgs(args: Seq[String]): (Seq[(String, String)], Int) = {
-    val (properties, others) = args.span(_.startsWith("-D"))
-    // collect arguments plus config file property if present 
-    val javaProperties = properties.map(_.drop(2).split('=')).map(a => a(0) -> a(1)).toSeq
-    val port = others.headOption.map { portString =>
-      try {
+  private def parsePort(portString: String): Int = {
+    try {
         Integer.parseInt(portString)
       } catch {
         case e => sys.error("Invalid port argument: " + portString)
       }
-    }.getOrElse(9000)
+  }
+
+  private def filterArgs(args: Seq[String]): (Seq[(String, String)], Int) = {
+    val (properties, others) = args.span(_.startsWith("-D"))
+    // collect arguments plus config file property if present 
+    val httpPort = Option(System.getProperty("http.port"))
+    val javaProperties = properties.map(_.drop(2).split('=')).map(a => a(0) -> a(1)).toSeq
+    //port can be defined as a numeric argument, -Dhttp.port argument or a generic sys property 
+    val port = others.headOption.orElse(javaProperties.toMap.get("http.port")).orElse(httpPort).map(parsePort).getOrElse(9000)
+    
     (javaProperties, port)
   }
 
@@ -982,6 +1006,7 @@ exec java $* -cp "`dirname $0`/lib/*" """ + config.map(_ => "-Dconfig.file=`dirn
         println()
         state.fail
       }
+
       case Right(dependencies) => {
         println()
         println("Here are the resolved dependencies of your application:")
@@ -990,20 +1015,20 @@ exec java $* -cp "`dirname $0`/lib/*" """ + config.map(_ => "-Dconfig.file=`dirn
         import scala.Console._
 
         def asTableRow(module: Map[Symbol, Any]): Seq[(String, String, String, Boolean)] = {
-          val formatted = (Seq(module.get('module).map {
+           val formatted = (Seq(module.get('module).map {
             case (org, name, rev) => org + ":" + name + ":" + rev
           }).flatten,
 
             module.get('requiredBy).map {
-              case callers @ Seq(_*) => callers.map {
-                case (org, name, rev) => org + ":" + name + ":" + rev
+              case callers: Seq[_] => callers.map {
+                case (org, name, rev) => org.toString + ":" + name.toString + ":" + rev.toString
               }
             }.flatten.toSeq,
 
             module.get('evictedBy).map {
               case Some(rev) => Seq("Evicted by " + rev)
               case None => module.get('artifacts).map {
-                case artifacts: Seq[String] => artifacts.map("As " + _)
+                case artifacts: Seq[_] => artifacts.map("As " + _.toString)
               }.flatten
             }.flatten.toSeq)
           val maxLines = Seq(formatted._1.size, formatted._2.size, formatted._3.size).max

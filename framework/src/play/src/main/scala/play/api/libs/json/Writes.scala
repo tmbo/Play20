@@ -10,7 +10,7 @@ import scala.annotation.implicitNotFound
 @implicitNotFound(
   "No Json deserializer found for type ${T}. Try to implement an implicit Writes or Format for this type."
 )
-trait Writes[T] {
+trait Writes[-T] {
 
   /**
    * Convert the object into a JsValue
@@ -62,6 +62,13 @@ trait DefaultWrites {
    */
   implicit object DoubleWrites extends Writes[Double] {
     def writes(o: Double) = JsNumber(o)
+  }
+  
+  /**
+   * Serializer for BigDecimal types.
+   */
+  implicit object BigDecimalWrites extends Writes[BigDecimal] {
+    def writes(o: BigDecimal) = JsNumber(o)
   }
 
   /**
@@ -139,13 +146,6 @@ trait DefaultWrites {
   implicit object JsValueWrites extends Writes[JsValue] {
     def writes(o: JsValue) = o
     def reads(json: JsValue) = json
-  }
-
-  /**
-   * Serializer for JsObjects.
-   */
-  implicit object JsObjectWrites extends Writes[JsObject] {
-    def writes(o: JsObject) = o
   }
 
   /**
