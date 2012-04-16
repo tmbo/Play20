@@ -42,6 +42,7 @@ object WS {
     val config = new AsyncHttpClientConfig.Builder()
       .setConnectionTimeoutInMs(current.configuration.getMilliseconds("ws.timeout").getOrElse(120000L).toInt)
       .setFollowRedirects(current.configuration.getBoolean("ws.followRedirects").getOrElse(true))
+      .setUseProxyProperties(current.configuration.getBoolean("ws.useProxyProperties").getOrElse(true))
     current.configuration.getString("ws.useragent").map { useragent =>
       config.setUserAgent(useragent)
     }
@@ -361,7 +362,7 @@ object WS {
         .setHeaders(headers)
         .setQueryString(queryString)
       followRedirects.map(request.setFollowRedirects(_))
-      timeout.map { t:Int =>
+      timeout.map { t: Int =>
         val config = new PerRequestConfig()
         config.setRequestTimeoutInMs(t)
         request.setPerRequestConfig(config)
@@ -375,7 +376,7 @@ object WS {
         .setQueryString(queryString)
         .setBody(wrt.transform(body))
       followRedirects.map(request.setFollowRedirects(_))
-      timeout.map { t:Int =>
+      timeout.map { t: Int =>
         val config = new PerRequestConfig()
         config.setRequestTimeoutInMs(t)
         request.setPerRequestConfig(config)
