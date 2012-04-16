@@ -3,6 +3,8 @@ package play.core.coffeescript
 import java.io.File
 import scala.util.matching.Regex
 
+case class CoffeescriptPreprocessorException( error: String) extends Throwable
+
 object Patterns {
 
   val IdentifierCharPattern = "[a-zA-Z0-9_\\-]"
@@ -20,12 +22,17 @@ object Patterns {
       "\\s*\\->[ \\t]*"
 
   val PreviousToMacroUsage = "(([ \\t]*).*?)"
+
+  val DependenciesPattern = "###\\s*define([^#]*)###"
+  val DependenciePattern = "[^\\n\\s\\:]+"
 }
 
 object CoffeescriptPreprocessor {
   import Patterns._
 
   val MacroRx = new Regex( MacroPattern, "indent", "name", "params" )
+  val DependenciesRx = new Regex( DependenciesPattern, "dependencies", "last" )
+  val DependencieRx = new Regex( DependenciePattern, "dependencie", "name" )
 
   def processOneMakro( string: String ) = {
     for {
@@ -40,14 +47,14 @@ object CoffeescriptPreprocessor {
       }
 
       val macro = Macro( m.group( "name" ), m.group( "params" ), body.mkString( "\n" ) )
-      //println( macro )
+
       var content = m.before.toString() + after.mkString( "\n" )
       macro.process( content )
     }
   }
 
-  def process( file: File ) = {
-    var result = scala.io.Source.fromFile( file ).mkString
+  def processMacros( fileContent: String ) = {
+    var result = fileContent
     var foundMacro = true
 
     while ( foundMacro ) {
@@ -60,6 +67,38 @@ object CoffeescriptPreprocessor {
       }
     }
     result
+  }
+
+  def process( file: File ) = {
+    val fileContent = scala.io.Source.fromFile( file ).mkString
+    processMacros( processDependencies( fileContent ) )
+  }
+
+  def processDependencies( fileContent: String ) = {
+    ( for {
+      m <- DependenciesRx.findFirstMatchIn( fileContent )
+    } yield {
+      val dependencieString = m.group( "dependencies" )
+      val dependencieList = DependenciePattern.r.findAllIn( dependencieString ).toList
+      
+      val pathList = dependencieList.sliding( 1, 2 ).flatten.map( "\t\t" + _ )
+      val paths = pathList.mkString( "\n" )
+      
+      val parameterList = ( dependencieList.tail sliding ( 1, 2 ) flatten )
+      val parameters = parameterList.mkString( ", " )
+      
+      if(pathList.size != parameterList.size)
+        throw new CoffeescriptPreprocessorException( "Dependency list is incorrect!" )
+     
+      val body = m.after.toString.split( "\n" ).map( "\t\t" + _ ).mkString( "\n" )
+
+      """define(
+      | [
+      |%s
+      | ], (%s) ->
+      |%s
+      |)""".stripMargin.format( paths, parameters, body )
+    } ) getOrElse fileContent
   }
 }
 

@@ -290,6 +290,7 @@ exec java $* -cp "`dirname $0`/lib/*" """ + config.map(_ => "-Dconfig.file=`dirn
   // naming: how to name the generated file from the original file and whether it should be minified or not
   // compile: compile the file and return the compiled sources, the minified source (if relevant) and the list of dependencies
   def AssetsCompiler(name: String,
+    completeRecompile: Boolean,
     watch: File => PathFinder,
     filesSetting: sbt.SettingKey[PathFinder],
     naming: (String, Boolean) => String,
@@ -302,25 +303,34 @@ exec java $* -cp "`dirname $0`/lib/*" """ + config.map(_ => "-Dconfig.file=`dirn
       val cacheFile = cache / name
       val currentInfos = watch(src).get.map(f => f -> FileInfo.lastModified(f)).toMap
       val (previousRelation, previousInfo) = Sync.readInfo(cacheFile)(FileInfo.lastModified.format)
-      
       if (previousInfo != currentInfos) {
       
         // Delete previous generated files
-        previousRelation._2s.foreach(IO.delete)
+        if(completeRecompile)
+          previousRelation._2s.foreach(IO.delete)
         
-  		val t = System.currentTimeMillis()
-        val generated = (files x relativeTo(Seq(src / "assets"))).flatMap {
+        val t = System.currentTimeMillis()
+  		
+        val generated = (files x relativeTo(Seq(src / "assets"))).par.flatMap {
           case (sourceFile, name) => {
-            val (debug, min, dependencies) = compile(sourceFile, options)
-            val out = new File(resources, "public/" + naming(name, false))
-            val outMin = new File(resources, "public/" + naming(name, true))
-            IO.write(out, debug)
-            dependencies.map(_ -> out) ++ min.map { minified =>
-              IO.write(outMin, minified)
-              dependencies.map(_ -> outMin)
-            }.getOrElse(Nil)
+            if( completeRecompile || previousInfo.get(sourceFile) != currentInfos.get(sourceFile)){
+              val (debug, min, dependencies) = compile(sourceFile, options)
+              val out = new File(resources, "public/" + naming(name, false))
+              val outMin = new File(resources, "public/" + naming(name, true))
+              IO.write(out, debug)
+              val r =
+              dependencies.map(_ -> out) ++ min.map { minified =>
+                IO.write(outMin, minified)
+                dependencies.map(_ -> outMin)
+              }.getOrElse(Nil)
+              r
+            } else {
+              previousRelation.filter{
+                case (s,_) => s == sourceFile
+              }.all
+            }
           }
-        }
+        }.seq
           
         Sync.writeInfo(cacheFile,
           Relation.empty[File, File] ++ generated,
@@ -340,7 +350,7 @@ exec java $* -cp "`dirname $0`/lib/*" """ + config.map(_ => "-Dconfig.file=`dirn
 
     }
 
-  val LessCompiler = AssetsCompiler("less",
+  val LessCompiler = AssetsCompiler("less", true,
     (_ ** "*.less"),
     lessEntryPoints,
     { (name, min) => name.replace(".less", if (min) ".min.css" else ".css") },
@@ -348,7 +358,7 @@ exec java $* -cp "`dirname $0`/lib/*" """ + config.map(_ => "-Dconfig.file=`dirn
     lessOptions
   )
 
-  val JavascriptCompiler = AssetsCompiler("javascripts",
+  val JavascriptCompiler = AssetsCompiler("javascripts", true,
     (_ ** "*.js"),
     javascriptEntryPoints,
     { (name, min) => name.replace(".js", if (min) ".min.js" else ".js") },
@@ -356,7 +366,7 @@ exec java $* -cp "`dirname $0`/lib/*" """ + config.map(_ => "-Dconfig.file=`dirn
     closureCompilerOptions
   )
 
-  val CoffeescriptCompiler = AssetsCompiler("coffeescript",
+  val CoffeescriptCompiler = AssetsCompiler("coffeescript", false,
     (_ ** "*.coffee"),
     coffeescriptEntryPoints,
     { (name, min) => name.replace(".coffee", if (min) ".min.js" else ".js") },

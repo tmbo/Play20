@@ -37,6 +37,13 @@ object CoffeescriptCompiler {
       val pipeSource = new ByteArrayInputStream(preprocessorOutput.getBytes())
       "coffee -scb" #< pipeSource !! logger
     } catch {
+      case e: CoffeescriptPreprocessorException => {
+        throw CompilationException(
+            e.error,
+            source,
+            source,
+            Some(1))
+      }
       case e: java.lang.RuntimeException => {
         val error = logger.error match {
           case x if (x.size > 0) => x.last
