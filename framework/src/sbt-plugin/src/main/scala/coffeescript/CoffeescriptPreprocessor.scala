@@ -81,23 +81,31 @@ object CoffeescriptPreprocessor {
       val dependencieString = m.group( "dependencies" )
       val dependencieList = DependenciePattern.r.findAllIn( dependencieString ).toList
       
-      val pathList = dependencieList.sliding( 1, 2 ).flatten.map( "\t\t" + _ )
-      val paths = pathList.mkString( "\n" )
-      
-      val parameterList = ( dependencieList.tail sliding ( 1, 2 ) flatten )
-      val parameters = parameterList.mkString( ", " )
-      
-      if(pathList.size != parameterList.size)
-        throw new CoffeescriptPreprocessorException( "Dependency list is incorrect!" )
-     
-      val body = m.after.toString.split( "\n" ).map( "\t\t" + _ ).mkString( "\n" )
-
-      """define(
-      | [
-      |%s
-      | ], (%s) ->
-      |%s
-      |)""".stripMargin.format( paths, parameters, body )
+      val r = if( dependencieList.size == 0){
+        val pathList = dependencieList.sliding( 1, 2 ).flatten.map( "\t\t" + _ )
+        val paths = pathList.mkString( "\n" )
+        
+        val parameterList = ( dependencieList.tail sliding ( 1, 2 ) flatten )
+        val parameters = parameterList.mkString( ", " )
+        
+        if(pathList.size != parameterList.size)
+          throw new CoffeescriptPreprocessorException( "Dependency list is incorrect!" )
+       
+        val body = m.after.toString.split( "\n" ).map( "\t\t" + _ ).mkString( "\n" )
+  
+        """define(
+        | [
+        |%s
+        | ], (%s) ->
+        |%s
+        |)""".stripMargin.format( paths, parameters, body )
+      } else {
+        val body = m.after.toString.split( "\n" ).map( "\t" + _ ).mkString( "\n" )
+        
+        "define -> \n%s".stripMargin.format( body )
+      }
+      println(r)
+      r
     } ) getOrElse fileContent
   }
 }
