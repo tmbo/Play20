@@ -311,27 +311,32 @@ exec java $* -cp "`dirname $0`/lib/*" """ + customFileName.map(fn => "-Dconfig.f
           previousRelation._2s.foreach(IO.delete)
         
         val t = System.currentTimeMillis()
-  		
-        val generated = (files x relativeTo(Seq(src / "assets"))).par.flatMap {
-          case (sourceFile, name) => {
-            if( completeRecompile || previousInfo.get(sourceFile) != currentInfos.get(sourceFile)){
-              val (debug, min, dependencies) = compile(sourceFile, options)
-              val out = new File(resources, "public/" + naming(name, false))
-              val outMin = new File(resources, "public/" + naming(name, true))
-              IO.write(out, debug)
-              val r =
-              dependencies.map(_ -> out) ++ min.map { minified =>
-                IO.write(outMin, minified)
-                dependencies.map(_ -> outMin)
-              }.getOrElse(Nil)
-              r
-            } else {
-              previousRelation.filter{
-                case (s,_) => s == sourceFile
-              }.all
+        val generated = 
+        try{
+          (files x relativeTo(Seq(src / "assets"))).par.flatMap {
+            case (sourceFile, name) => {
+              if( completeRecompile || previousInfo.get(sourceFile) != currentInfos.get(sourceFile)){
+                val (debug, min, dependencies) = compile(sourceFile, options)
+                val out = new File(resources, "public/" + naming(name, false))
+                val outMin = new File(resources, "public/" + naming(name, true))
+                IO.write(out, debug)
+                val r =
+                dependencies.map(_ -> out) ++ min.map { minified =>
+                  IO.write(outMin, minified)
+                  dependencies.map(_ -> outMin)
+                }.getOrElse(Nil)
+                r
+              } else {
+                previousRelation.filter{
+                  case (s,_) => s == sourceFile
+                }.all
+              }
             }
-          }
-        }.seq
+          }.seq
+        } catch {
+          case e:CompositeThrowable =>
+            throw e.throwables.head
+        }
           
         Sync.writeInfo(cacheFile,
           Relation.empty[File, File] ++ generated,
