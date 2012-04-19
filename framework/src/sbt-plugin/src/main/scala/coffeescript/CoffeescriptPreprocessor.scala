@@ -80,8 +80,7 @@ object CoffeescriptPreprocessor {
     } yield {
       val dependencieString = m.group( "dependencies" )
       val dependencieList = DependenciePattern.r.findAllIn( dependencieString ).toList
-      
-      if( dependencieList.size == 0){
+      if( dependencieList.size > 0){
         val pathList = dependencieList.sliding( 1, 2 ).flatten.map( "\t\t" + _ )
         val paths = pathList.mkString( "\n" )
         
