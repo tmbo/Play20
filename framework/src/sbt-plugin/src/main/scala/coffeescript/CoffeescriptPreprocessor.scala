@@ -3,7 +3,7 @@ package play.core.coffeescript
 import java.io.File
 import scala.util.matching.Regex
 
-case class CoffeescriptPreprocessorException( error: String) extends Throwable
+case class CoffeescriptPreprocessorException( error: String, line: Int ) extends Throwable
 
 object Patterns {
 
@@ -24,7 +24,7 @@ object Patterns {
   val PreviousToMacroUsage = "(([ \\t]*).*?)"
 
   val DependenciesPattern = "###\\s*define([^#]*)###"
-  val DependenciePattern = "[^\\n\\s\\:]+"
+  val DependenciePattern = "\\s*([^\"\\n\\s\\:]+)\\s*:\\s*([^\"\\n\\s\\:]+)\\s*"
 }
 
 object CoffeescriptPreprocessor {
@@ -78,20 +78,23 @@ object CoffeescriptPreprocessor {
     ( for {
       m <- DependenciesRx.findFirstMatchIn( fileContent )
     } yield {
-      val dependencieString = m.group( "dependencies" )
-      val dependencieList = DependenciePattern.r.findAllIn( dependencieString ).toList
-      if( dependencieList.size > 0){
-        val pathList = dependencieList.sliding( 1, 2 ).flatten.map( "\t\t" + _ )
-        val paths = pathList.mkString( "\n" )
-        
-        val parameterList = ( dependencieList.tail sliding ( 1, 2 ) flatten )
-        val parameters = parameterList.mkString( ", " )
-        
-        if(pathList.size != parameterList.size)
-          throw new CoffeescriptPreprocessorException( "Dependency list is incorrect!" )
-       
+      val dependencieStrings = m.group( "dependencies" ).split( "\n" ).filter( _.trim != "" )
+      val dependencies = dependencieStrings.zipWithIndex.map { e =>
+        e._1 match {
+          case DependencieRx( path, parameter ) => 
+            ( path, parameter )
+          case _ =>
+            val line = m.before.toString.split( "\n" ).size + e._2 + 1
+            throw new CoffeescriptPreprocessorException( "Dependency list is incorrect!", line )
+        }
+      }
+      if ( dependencies.size > 0 ) {
+        val paths = dependencies.map( "\t\t\"" + _._1 + "\"" ).mkString( "\n" )
+
+        val parameters = dependencies.map( _._2 ).mkString( ", " )
+
         val body = m.after.toString.split( "\n" ).map( "\t\t" + _ ).mkString( "\n" )
-  
+
         """define(
         | [
         |%s
@@ -100,7 +103,7 @@ object CoffeescriptPreprocessor {
         |)""".stripMargin.format( paths, parameters, body )
       } else {
         val body = m.after.toString.split( "\n" ).map( "\t" + _ ).mkString( "\n" )
-        
+
         "define -> \n%s".stripMargin.format( body )
       }
     } ) getOrElse fileContent

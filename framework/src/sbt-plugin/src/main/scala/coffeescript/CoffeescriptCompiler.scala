@@ -39,10 +39,10 @@ object CoffeescriptCompiler {
     } catch {
       case e: CoffeescriptPreprocessorException => {
         throw CompilationException(
-            e.error,
+            "Coffeescript Preprocessor Error: " + e.error,
             source,
             source,
-            Some(1))
+            Some(e.line))
       }
       case e: java.lang.RuntimeException => {
         val error = logger.error match {
