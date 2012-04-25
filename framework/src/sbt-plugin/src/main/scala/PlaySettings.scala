@@ -123,7 +123,7 @@ trait PlaySettings {
 
     mainClass in (Compile, run) := Some(classOf[play.core.server.NettyServer].getName),
 
-    compile in (Compile) <<= PostCompile(testScope = false),
+    compile in (Compile) <<= PostCompile(scope = Compile),
 
     dist <<= distTask,
 
@@ -174,6 +174,8 @@ trait PlaySettings {
     lessOptions := Seq.empty[String],
     coffeescriptOptions := Seq.empty[String],
     closureCompilerOptions := Seq.empty[String],
+    
+    incrementalAssetsCompilation := false,
 
     // Templates
 

@@ -27,23 +27,16 @@ object CoffeescriptCompiler {
   def compile(source: File, options: Seq[String]): String = {
     val logger = new ExecLogger
     var lineMapping = Map[Int, Int]()
-    var preprocessorFile: Option[File] = None
     try {
-      val r = CoffeescriptPreprocessor.process( source )
-      val preprocessorOutput = r._1
-      lineMapping = r._2
-      preprocessorFile = Some(File.createTempFile("prepoutput", ".coffee"))
-      val out = new PrintWriter( preprocessorFile.get )
-      try{ 
-        out.print( preprocessorOutput ) 
-      } finally { out.close }
+      val preproResult = CoffeescriptPreprocessor.process( source )
+      val preprocessorOutput = preproResult._1
+      lineMapping = preproResult._2
       val pipeSource = new ByteArrayInputStream(preprocessorOutput.getBytes())
       "coffee -scb" #< pipeSource !! logger
     } catch {
       case e: CoffeescriptPreprocessorException => {
         throw CompilationException(
             "Coffeescript Preprocessor Error: " + e.error,
-            source,
             source,
             Some(e.line))
       }
@@ -60,11 +53,9 @@ object CoffeescriptCompiler {
             CompilationException(
             msg,
             source,
-            source,
             lineMapping.get( l-1 ) orElse ( Some( l )))
           case msg => CompilationException(
             msg,
-            source,
             source,
             None)
         }
@@ -73,15 +64,11 @@ object CoffeescriptCompiler {
   }
 }
 
-case class CompilationException(message: String, preproOutput: File, coffeeFile: File, atLine: Option[Int]) extends PlayException(
+case class CompilationException(message: String, coffeeFile: File, atLine: Option[Int]) extends PlayException(
   "Compilation error", message) with PlayException.ExceptionSource {
   def line = atLine
-
   def position = None
-
-  def input = Some(scalax.file.Path(preproOutput))
-
+  def input = Some(scalax.file.Path(coffeeFile))
   def sourceName = Some(coffeeFile.getAbsolutePath)
-  
   override def sourceType = Some( "coffee" )
 }

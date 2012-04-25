@@ -16,6 +16,8 @@ object Iteratee {
       error: (String, Input[E]) => Promise[B]): Promise[B] = i.flatMap(_.fold(done, cont, error))
   }
 
+  def isDoneOrError[E,A](it:Iteratee[E,A]):Promise[Boolean] = it.pureFold((_,_) => true, _ => false, (_,_) => true)
+
   /**
    * Create an [[play.api.libs.iteratee.Iteratee]] which folds the content of the Input using a given function and an initial state
    *
@@ -53,6 +55,16 @@ object Iteratee {
       case Input.EOF => Done(s, Input.EOF)
       case Input.Empty => Cont[E, A](i => step(s)(i))
       case Input.El(e) => { val newS = f(s, e); flatten(newS.map(s1 => Cont[E, A](i => step(s1)(i)))) }
+    }
+    (Cont[E, A](i => step(state)(i)))
+  }
+
+  def fold2[E, A](state: A)(f: (A, E) => Promise[(A,Boolean)]): Iteratee[E, A] = {
+    def step(s: A)(i: Input[E]): Iteratee[E, A] = i match {
+
+      case Input.EOF => Done(s, Input.EOF)
+      case Input.Empty => Cont[E, A](i => step(s)(i))
+      case Input.El(e) => { val newS = f(s, e); flatten(newS.map{ case (s1,done) => if(!done) Cont[E, A](i => step(s1)(i)) else Done(s1,Input.Empty) }) }
     }
     (Cont[E, A](i => step(state)(i)))
   }
@@ -412,7 +424,8 @@ trait Enumerator[E] {
   def flatMap[U](f: E => Enumerator[U]): Enumerator[U] = {
     new Enumerator[U] {
       def apply[A](iteratee: Iteratee[U, A]): Promise[Iteratee[U, A]] = {
-        val folder = Iteratee.fold1[E, Iteratee[U, A]](iteratee)((it, e) => f(e)(it))
+
+        val folder = Iteratee.fold2[E, Iteratee[U, A]](iteratee)((it, e) => f(e)(it).flatMap(newIt => Iteratee.isDoneOrError(newIt).map((newIt,_))))
         parent(folder).flatMap(_.run)
       }
     }
@@ -885,7 +898,7 @@ object Enumerator {
 
   def imperative[E](
     onStart: () => Unit = () => (),
-    onComplete: => Unit = () => (),
+    onComplete: () => Unit = () => (),
     onError: (String, Input[E]) => Unit = (_: String, _: Input[E]) => ()): PushEnumerator[E] = new PushEnumerator[E](onStart, onComplete, onError)
 
   def pushee[E](
@@ -911,7 +924,7 @@ object Enumerator {
 
               // DONE
               (a, in) => {
-                onComplete
+                onComplete()
                 Done(a, in)
               },
 
@@ -920,7 +933,7 @@ object Enumerator {
                 val next = k(Input.El(item))
                 next.pureFlatFold(
                   (a, in) => {
-                    onComplete
+                    onComplete()
                     next
                   },
                   _ => next,
@@ -1108,15 +1121,15 @@ object Enumerator {
 }
 
 class PushEnumerator[E] private[iteratee] (
-    onStart: => Unit = () => (),
-    onComplete: => Unit = () => (),
+    onStart: () => Unit = () => (),
+    onComplete: () => Unit = () => (),
     onError: (String, Input[E]) => Unit = (_: String, _: Input[E]) => ()) extends Enumerator[E] with Enumerator.Pushee[E] {
 
   var iteratee: Iteratee[E, _] = _
   var promise: Promise[Iteratee[E, _]] with Redeemable[Iteratee[E, _]] = _
 
   def apply[A](it: Iteratee[E, A]): Promise[Iteratee[E, A]] = {
-    onStart
+    onStart()
     iteratee = it.asInstanceOf[Iteratee[E, _]]
     val newPromise = new STMPromise[Iteratee[E, A]]()
     promise = newPromise.asInstanceOf[Promise[Iteratee[E, _]] with Redeemable[Iteratee[E, _]]]
@@ -1137,7 +1150,7 @@ class PushEnumerator[E] private[iteratee] (
 
         // DONE
         (a, in) => {
-          onComplete
+          onComplete()
           Done(a, in)
         },
 
@@ -1146,7 +1159,7 @@ class PushEnumerator[E] private[iteratee] (
           val next = k(Input.El(item))
           next.pureFlatFold(
             (a, in) => {
-              onComplete
+              onComplete()
               next
             },
             _ => next,

@@ -290,89 +290,88 @@ exec java $* -cp "`dirname $0`/lib/*" """ + customFileName.map(fn => "-Dconfig.f
   // files: the function to find files to compile from the assets directory
   // naming: how to name the generated file from the original file and whether it should be minified or not
   // compile: compile the file and return the compiled sources, the minified source (if relevant) and the list of dependencies
-  def AssetsCompiler(name: String,
-    completeRecompile: Boolean,
+def AssetsCompiler(name: String,
     watch: File => PathFinder,
     filesSetting: sbt.SettingKey[PathFinder],
     naming: (String, Boolean) => String,
     compile: (File, Seq[String]) => (String, Option[String], Seq[File]),
     optionsSettings: sbt.SettingKey[Seq[String]]) =
-    (sourceDirectory in Compile, resourceManaged in Compile, cacheDirectory, optionsSettings, filesSetting) map { (src, resources, cache, options, files) =>
-
+    (sourceDirectory in Compile, resourceManaged in Compile, cacheDirectory, optionsSettings, filesSetting, incrementalAssetsCompilation) map { (src, resources, cache, options, files, incrementalAssetsCompilation) =>
+ 
       import java.io._
-
+ 
       val cacheFile = cache / name
       val currentInfos = watch(src).get.map(f => f -> FileInfo.lastModified(f)).toMap
-      val (previousRelation, previousInfo) = Sync.readInfo(cacheFile)(FileInfo.lastModified.format)
-      if (previousInfo != currentInfos) {
       
-        // Delete previous generated files
-        if(completeRecompile)
-          previousRelation._2s.foreach(IO.delete)
-        
+      val (previousRelation, previousInfo) = Sync.readInfo(cacheFile)(FileInfo.lastModified.format)
+       
+ 
+      if (previousInfo != currentInfos) {
+ 
+        //a changed file can be either a new file, a deleted file or a modified one
+        lazy val changedFiles: Seq[File] = currentInfos.filter(e=> !previousInfo.get(e._1).isDefined || previousInfo(e._1).lastModified < e._2.lastModified).map(_._1).toSeq ++ previousInfo.filter(e=> !currentInfos.get(e._1).isDefined).map(_._1).toSeq
+       
+        previousRelation.filter((original,compiled)=> !incrementalAssetsCompilation || changedFiles.contains(original))._2s.foreach(IO.delete)
+ 
         val t = System.currentTimeMillis()
-        val generated = 
+        val generated: Seq[(File, java.io.File)] = 
         try{
           (files x relativeTo(Seq(src / "assets"))).par.flatMap {
             case (sourceFile, name) => {
-              if( completeRecompile || previousInfo.get(sourceFile) != currentInfos.get(sourceFile)){
-                val (debug, min, dependencies) = compile(sourceFile, options)
-                val out = new File(resources, "public/" + naming(name, false))
-                val outMin = new File(resources, "public/" + naming(name, true))
-                IO.write(out, debug)
-                val r =
-                dependencies.map(_ -> out) ++ min.map { minified =>
-                  IO.write(outMin, minified)
-                  dependencies.map(_ -> outMin)
-                }.getOrElse(Nil)
-                r
-              } else {
-                previousRelation.filter{
-                  case (s,_) => s == sourceFile
-                }.all
-              }
+                if (!incrementalAssetsCompilation || changedFiles.contains(sourceFile)) {
+                  val (debug, min, dependencies) = compile(sourceFile, options)
+                  val out = new File(resources, "public/" + naming(name, false))
+                  val outMin = new File(resources, "public/" + naming(name, true))
+                  IO.write(out, debug)
+                  dependencies.map(_ -> out) ++ min.map { minified =>
+                    IO.write(outMin, minified)
+                    dependencies.map(_ -> outMin)
+                  }.getOrElse(Nil)
+                } else {
+                  previousRelation.filter((original,compiled)=> original == sourceFile)._2s.map(sourceFile ->_)
+                }
             }
           }.seq
         } catch {
           case e:CompositeThrowable =>
             throw e.throwables.head
         }
-          
+        //write object graph to cache file 
         Sync.writeInfo(cacheFile,
-          Relation.empty[File, File] ++ generated,
-          currentInfos)(FileInfo.lastModified.format)
-
-        println("Finished compiling %s sources: %dms".format(name,System.currentTimeMillis-t))
-        // Return new files
+           Relation.empty[File, File] ++ generated,
+           currentInfos)(FileInfo.lastModified.format)
  
-        generated.map(_._2).distinct.toList
-        
-      } else {
+        println("Finished compiling %s sources: %dms".format(name,System.currentTimeMillis-t))
 
+        // Return new files
+        generated.map(_._2).distinct.toList
+ 
+      } else {
+ 
         // Return previously generated files
         previousRelation._2s.toSeq
-
+ 
       }
-
+ 
     }
-
-  val LessCompiler = AssetsCompiler("less", true,
+ 
+  val LessCompiler = AssetsCompiler("less",
     (_ ** "*.less"),
     lessEntryPoints,
     { (name, min) => name.replace(".less", if (min) ".min.css" else ".css") },
-    { (lessFile, options) => play.core.less.LessCompiler.compile(lessFile, options) },
+    { (lessFile, options) => play.core.less.LessCompiler.compile(lessFile) },
     lessOptions
   )
-
-  def JavascriptCompiler(fullCompilerOptions: Option[com.google.javascript.jscomp.CompilerOptions]) = AssetsCompiler("javascripts", true,
+ 
+  def JavascriptCompiler(fullCompilerOptions: Option[com.google.javascript.jscomp.CompilerOptions]) = AssetsCompiler("javascripts",
     (_ ** "*.js"),
     javascriptEntryPoints,
     { (name, min) => name.replace(".js", if (min) ".min.js" else ".js") },
     { (jsFile: File, simpleCompilerOptions) => play.core.jscompile.JavascriptCompiler.compile(jsFile, simpleCompilerOptions, fullCompilerOptions) },
     closureCompilerOptions
   )
-
-  val CoffeescriptCompiler = AssetsCompiler("coffeescript", false,
+ 
+  val CoffeescriptCompiler = AssetsCompiler("coffeescript",
     (_ ** "*.coffee"),
     coffeescriptEntryPoints,
     { (name, min) => name.replace(".coffee", if (min) ".min.js" else ".js") },
@@ -382,11 +381,11 @@ exec java $* -cp "`dirname $0`/lib/*" """ + customFileName.map(fn => "-Dconfig.f
       // Any error here would be because of CoffeeScript, not the developer;
       // so we don't want compilation to fail.
       val minified = 
-      	if(options.contains("minify"))
-    	  catching(classOf[CompilationException])
-    	  	.opt(play.core.jscompile.JavascriptCompiler.minify(jsSource, Some(coffeeFile.getName())))
-    	else
-    	  None
+        if(options.contains("minify"))
+        catching(classOf[CompilationException])
+          .opt(play.core.jscompile.JavascriptCompiler.minify(jsSource, Some(coffeeFile.getName())))
+      else
+        None
       (jsSource, minified, Seq(coffeeFile))
     },
     coffeescriptOptions
@@ -394,15 +393,11 @@ exec java $* -cp "`dirname $0`/lib/*" """ + customFileName.map(fn => "-Dconfig.f
 
   // ----- Post compile (need to be refactored and fully configurable)
 
-  def PostCompile(testScope: Boolean) = (javaSource in Test, sourceDirectory in Compile, dependencyClasspath in Compile, compile in Compile, javaSource in Compile, sourceManaged in Compile, classDirectory in Compile, ebeanEnabled) map { (testSrc, src, deps, analysis, javaSrc, srcManaged, classes, ebean) =>
-
-    // Properties
+  def PostCompile(scope: Configuration) = (sourceDirectory in scope, dependencyClasspath in scope, compile in scope, javaSource in scope, sourceManaged in scope, classDirectory in scope, ebeanEnabled) map { (src, deps, analysis, javaSrc, srcManaged, classes, ebean) =>
 
     val classpath = (deps.map(_.data.getAbsolutePath).toArray :+ classes.getAbsolutePath).mkString(java.io.File.pathSeparator)
 
-    val classFilter = if (testScope == true) (testSrc ** "*.java") else (javaSrc ** "*.java")
-
-    val javaClasses = classFilter.get.map { sourceFile =>
+    val javaClasses = (javaSrc ** "*.java").get.map { sourceFile =>
       analysis.relations.products(sourceFile)
     }.flatten.distinct 
 
@@ -449,21 +444,20 @@ exec java $* -cp "`dirname $0`/lib/*" """ + customFileName.map(fn => "-Dconfig.f
         Thread.currentThread.setContextClassLoader(originalContextClassLoader)
       }
     }
+    // Copy managed classes - only needed in Compile scope
+    if (scope.name.toLowerCase == "compile") {
+      val managedClassesDirectory = classes.getParentFile / (classes.getName + "_managed")
 
-    // Copy managed classes
+      val managedClasses = ((srcManaged ** "*.scala").get ++ (srcManaged ** "*.java").get).map { managedSourceFile =>
+        analysis.relations.products(managedSourceFile)
+      }.flatten x rebase(classes, managedClassesDirectory)
 
-    val managedClassesDirectory = classes.getParentFile / (classes.getName + "_managed")
+      // Copy modified class files
+      val managedSet = IO.copy(managedClasses)
 
-    val managedClasses = ((srcManaged ** "*.scala").get ++ (srcManaged ** "*.java").get).map { managedSourceFile =>
-      analysis.relations.products(managedSourceFile)
-    }.flatten x rebase(classes, managedClassesDirectory)
-
-    // Copy modified class files
-    val managedSet = IO.copy(managedClasses)
-
-    // Remove deleted class files
-    (managedClassesDirectory ** "*.class").get.filterNot(managedSet.contains(_)).foreach(_.delete())
-
+      // Remove deleted class files
+      (managedClassesDirectory ** "*.class").get.filterNot(managedSet.contains(_)).foreach(_.delete())
+    }
     analysis
   }
 
