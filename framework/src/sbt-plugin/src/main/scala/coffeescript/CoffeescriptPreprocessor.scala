@@ -2,26 +2,28 @@ package play.core.coffeescript
 
 import java.io.File
 import scala.util.matching.Regex
+import coffeescript.CoffeeFile
+import coffeescript.CoffeeFile._
 
 case class CoffeescriptPreprocessorException( error: String, line: Int ) extends Throwable
 
 object Patterns {
 
   val IdentifierCharPattern = "[a-zA-Z0-9_\\-]"
-  val NoIdentifierCharPattern = "[^a-zA-Z0-9_\\-]"
+  val NoIdentifierCharPattern = "^|[^a-zA-Z0-9_\\-]|$"
   val IdentifierPattern = IdentifierCharPattern + "+"
 
   val ParamPattern = "\\s*" + IdentifierPattern + "\\s*"
   val GroupedParamPattern = "\\s*(" + IdentifierPattern + ")\\s*"
-
+ 
   val MacroPattern =
     "([ \\t]*)(" + IdentifierCharPattern + "*Macro)\\s*" + // macro name
       "[=:]\\s*\\(" +
       "((?:" + ParamPattern + ",)*" + ParamPattern + ")" + // param list
       "\\)" +
-      "\\s*\\->[ \\t]*"
+      "\\s*\\->[ \\t]*\\n"
 
-  val PreviousToMacroUsage = "(([ \\t]*).*?)"
+  val PreviousToMacroUsage = "(([ \\t]*)[^\\n]*?)"
 
   val DependenciesPattern = "###\\s*define([^#]*)###"
   val DependenciePattern = "\\s*([^\"\\n\\s\\:]+)\\s*:\\s*([^\"\\n\\s\\:]+)\\s*"
@@ -34,27 +36,30 @@ object CoffeescriptPreprocessor {
   val DependenciesRx = new Regex( DependenciesPattern, "dependencies", "last" )
   val DependencieRx = new Regex( DependenciePattern, "dependencie", "name" )
 
-  def processOneMakro( string: String ) = {
+  def processOneMakro( coffee: CoffeeFile ): Option[CoffeeFile] = {
     for {
-      m <- MacroRx.findFirstMatchIn( string )
+      m <- MacroRx.findFirstMatchIn( coffee.content )
     } yield {
-
+      
       val indent = m.group( "indent" )
-
+      val linesBefore = m.before.toString.count( _ == '\n' )
+      val bodyStart = linesBefore + m.matched.count( _ == '\n' ) + 1
+      
       val ( body, after ) = m.after.toString().split( "\n" ).span {
         line =>
           line.trim == "" || line.startsWith( indent + " " ) || line.startsWith( indent + "\t" )
       }
-
-      val macro = Macro( m.group( "name" ), m.group( "params" ), body.mkString( "\n" ) )
-
-      var content = m.before.toString() + after.mkString( "\n" )
+      
+      val macro = Macro( m.group( "name" ), m.group( "params" ), coffee.block( bodyStart, body.size ) )
+      var content =
+        coffee.blockTil( linesBefore ) ++
+          coffee.blockFrom( bodyStart + body.size )
       macro.process( content )
     }
   }
 
-  def processMacros( fileContent: String ) = {
-    var result = fileContent
+  def processMacros( coffee: CoffeeFile ) = {
+    var result = coffee
     var foundMacro = true
 
     while ( foundMacro ) {
@@ -69,48 +74,58 @@ object CoffeescriptPreprocessor {
     result
   }
 
-  def process( file: File ) = {
+  def process( file: File ): Tuple2[String, Map[Int, Int]] = {
     val fileContent = scala.io.Source.fromFile( file ).mkString
-    processMacros( processDependencies( fileContent ) )
+    val coffeeFile = CoffeeFile.fromString( fileContent )
+    val f = processDependencies( coffeeFile )
+    val result = processMacros( f )
+    result.content -> result.lineMapping
   }
 
-  def processDependencies( fileContent: String ) = {
+  def processDependencies( coffee: CoffeeFile ): CoffeeFile = {
     ( for {
-      m <- DependenciesRx.findFirstMatchIn( fileContent )
+      m <- DependenciesRx.findFirstMatchIn( coffee.content )
     } yield {
+      val firstLine = m.before.toString.split( "\n" ).size
+      val dependencyEnd = firstLine + m.matched.split( "\n" ).size
+
       val dependencieStrings = m.group( "dependencies" ).split( "\n" ).filter( _.trim != "" )
+
       val dependencies = dependencieStrings.zipWithIndex.map { e =>
         e._1 match {
-          case DependencieRx( path, parameter ) => 
-            ( path, parameter )
+          case DependencieRx( path, parameter ) =>
+            val line = coffee.lineOf( firstLine + e._2 + 1 )
+            ( path, parameter, line )
           case _ =>
-            val line = m.before.toString.split( "\n" ).size + e._2 + 1
+            val line = firstLine + e._2 + 1
             throw new CoffeescriptPreprocessorException( "Dependency list is incorrect!", line )
         }
       }
       if ( dependencies.size > 0 ) {
-        val paths = dependencies.map( "\t\t\"" + _._1 + "\"" ).mkString( "\n" )
+        val paths = dependencies.map {
+          case ( path, _, line ) =>
+            ( line, "\t\t\"" + path + "\"" )
+        }.toList
 
         val parameters = dependencies.map( _._2 ).mkString( ", " )
 
-        val body = m.after.toString.split( "\n" ).map( "\t\t" + _ ).mkString( "\n" )
-
-        """define(
-        | [
-        |%s
-        | ], (%s) ->
-        |%s
-        |)""".stripMargin.format( paths, parameters, body )
+        coffee.blockTil( firstLine - 1 ) ++
+          "define(" ++
+          " [" ++
+          paths ++
+          " ], (%s) ->".format( parameters ) ++
+          coffee.blockFrom( dependencyEnd ).map( "\t\t" + _ ) ++
+          ")"
       } else {
-        val body = m.after.toString.split( "\n" ).map( "\t" + _ ).mkString( "\n" )
-
-        "define -> \n%s".stripMargin.format( body )
+        coffee.blockTil( firstLine - 1 ) ++
+          "define ->" ++
+          coffee.blockFrom( dependencyEnd ).map( "\t" + _ )
       }
-    } ) getOrElse fileContent
+    } ) getOrElse coffee
   }
 }
 
-case class Macro( name: String, paramString: String, bodyString: String ) {
+case class Macro( name: String, paramString: String, coffeeBody: CoffeeFile ) {
   import Patterns._
 
   val params = paramString match {
@@ -126,28 +141,31 @@ case class Macro( name: String, paramString: String, bodyString: String ) {
     ( "(" + NoIdentifierCharPattern + ")" + p + "(" + NoIdentifierCharPattern + ")" ).r
   }
 
-  val body = outdentBlock( parametryFy( remTrailingEmptyLines( bodyString ) ).split( "\n" ).toList )
+  val body = outdentBlock( parametryFy( remTrailingEmptyLines( coffeeBody ) ) )
 
   override def toString() =
-    "Macro(%s, '%s', \n%s)".format( name, paramString, body.mkString( "\n" ) )
+    "Macro(%s, '%s', \n%s)".format( name, paramString, body.lines.mkString( "\n" ) )
 
-  def parametryFy( block: String ) =
-    paramsRx.zipWithIndex.foldLeft( block.replaceAll( "%", "%%" ) )( ( result, el ) => {
-      el._1.replaceAllIn( result, "$1%" + ( el._2 + 1 ) + "\\$s$2" )
+  def parametryFy( block: CoffeeFile ) =
+    paramsRx.zipWithIndex.foldLeft( block.map( _.replaceAll( "%", "%%" ) ) )( ( result, el ) => el match {
+      case ( paramRx, idx ) =>
+        result.map( line => paramRx.replaceAllIn( line, "$1%" + ( idx + 1 ) + "\\$s$2" ) )
     } )
 
-  def remTrailingEmptyLines( block: String ) =
-    ( "(^\\s*\\n)|(\\n\\s*$)".r ).replaceAllIn( block, "" )
+  def remTrailingEmptyLines( block: CoffeeFile ) =
+    CoffeeFile( block.lines.dropWhile( _.isEmpty ).reverse.dropWhile( _.isEmpty ).reverse )
 
-  def outdentBlock( block: List[String] ) = {
+  def outdentBlock( block: CoffeeFile ) = {
     val indentRx = "\\s*".r
-    block match {
+    block.lines match {
       case h :: _ =>
-        val originalIndent = indentRx.findFirstIn( h ).get.size
+        val originalIndent = indentRx.findFirstIn( h.content ).get.size
         block.map { s =>
-          if ( s.size >= originalIndent )
+          if ( s.size >= originalIndent ){
             s.substring( originalIndent )
-          else
+          } else if( s.trim != ""){
+            throw new Error( "Outdent failed" )
+          } else
             ""
         }
       case _ =>
@@ -155,28 +173,54 @@ case class Macro( name: String, paramString: String, bodyString: String ) {
     }
   }
 
-  def indentBlock( block: List[String], indent: String ) = {
-    block match {
+  def indentBlock( block: CoffeeFile, indent: String ) = {
+    block.lines match {
       case h :: t =>
-        h :: t.map( indent + _ ) // all lines except the first one get indented
+        // all lines except the first one get indented
+        block.blockTil( 1 ) ++
+          block.blockFrom( 2 ).map( indent + _ )
       case _ =>
-        Nil
+        block
     }
   }
-
-  def process( s: String ) = {
-    macroRx.replaceAllIn( s, matchObj => {
+  
+  def processOneUsage( block: CoffeeFile ): Option[CoffeeFile] = {
+    for {
+      matchObj <- macroRx.findFirstMatchIn( block.content )
+    } yield {
       val actual = 3 to matchObj.groupCount map ( matchObj.group )
       val preMacro = matchObj.group( 1 )
-      val additionalIndent = preMacro.trim() match {
+      val pastMacro = matchObj.after.toString.takeWhile( _ != '\n')
+      val additionalIndent = preMacro.trim match {
         case "" => ""
         case _  => "\t"
       }
-
       val indent = matchObj.group( 2 ) + additionalIndent
+      val result = preMacro +: indentBlock( body, indent ) :+ pastMacro
 
-      var result = preMacro + indentBlock( body, indent ).mkString( "\n" )
-      result.format( actual: _* ).replaceAll( "%%", "%" )
-    } )
+      val start = matchObj.before.toString.count( _ == '\n' )
+      val size = matchObj.matched.count( _ == '\n' )
+      val replaced = result.map( _.format( actual: _* ).replaceAll( "%%", "%" ) )
+      
+      block.blockTil( start ) ++
+          replaced ++
+          block.blockFrom( start + size + 2)
+    }
+  }
+
+  def process( block: CoffeeFile ) = {
+    var result = block
+    var foundMacro = true
+
+    while ( foundMacro ) {
+
+      processOneUsage( result ) match {
+        case Some( r ) =>
+          result = r
+        case _ =>
+          foundMacro = false
+      }
+    }
+    result  
   }
 }

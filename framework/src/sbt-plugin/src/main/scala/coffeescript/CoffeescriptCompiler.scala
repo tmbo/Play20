@@ -26,9 +26,12 @@ object CoffeescriptCompiler {
 
   def compile(source: File, options: Seq[String]): String = {
     val logger = new ExecLogger
+    var lineMapping = Map[Int, Int]()
     var preprocessorFile: Option[File] = None
     try {
-      val preprocessorOutput = CoffeescriptPreprocessor.process( source )
+      val r = CoffeescriptPreprocessor.process( source )
+      val preprocessorOutput = r._1
+      lineMapping = r._2
       preprocessorFile = Some(File.createTempFile("prepoutput", ".coffee"))
       val out = new PrintWriter( preprocessorFile.get )
       try{ 
@@ -52,14 +55,16 @@ object CoffeescriptCompiler {
         val line = """.*on line ([0-9]+).*""".r
 
         throw error match {
-          case msg @ line(l) => CompilationException(
+          case msg @ line(sl) => 
+            val l = Integer.parseInt(sl)
+            CompilationException(
             msg,
-            preprocessorFile getOrElse source,
             source,
-            Some(Integer.parseInt(l)))
+            source,
+            lineMapping.get( l-1 ) orElse ( Some( l )))
           case msg => CompilationException(
             msg,
-            preprocessorFile getOrElse source,
+            source,
             source,
             None)
         }
@@ -77,4 +82,6 @@ case class CompilationException(message: String, preproOutput: File, coffeeFile:
   def input = Some(scalax.file.Path(preproOutput))
 
   def sourceName = Some(coffeeFile.getAbsolutePath)
+  
+  override def sourceType = Some( "coffee" )
 }
