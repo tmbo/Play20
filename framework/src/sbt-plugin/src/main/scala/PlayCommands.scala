@@ -315,26 +315,21 @@ def AssetsCompiler(name: String,
  
         val t = System.currentTimeMillis()
         val generated: Seq[(File, java.io.File)] = 
-        try{
-          (files x relativeTo(Seq(src / "assets"))).par.flatMap {
-            case (sourceFile, name) => {
-                if (!incrementalAssetsCompilation || changedFiles.contains(sourceFile)) {
-                  val (debug, min, dependencies) = compile(sourceFile, options)
-                  val out = new File(resources, "public/" + naming(name, false))
-                  val outMin = new File(resources, "public/" + naming(name, true))
-                  IO.write(out, debug)
-                  dependencies.map(_ -> out) ++ min.map { minified =>
-                    IO.write(outMin, minified)
-                    dependencies.map(_ -> outMin)
-                  }.getOrElse(Nil)
-                } else {
-                  previousRelation.filter((original,compiled)=> original == sourceFile)._2s.map(sourceFile ->_)
-                }
-            }
-          }.seq
-        } catch {
-          case e:CompositeThrowable =>
-            throw e.throwables.head
+        (files x relativeTo(Seq(src / "assets"))).flatMap {
+          case (sourceFile, name) => {
+              if (!incrementalAssetsCompilation || changedFiles.contains(sourceFile)) {
+                val (debug, min, dependencies) = compile(sourceFile, options)
+                val out = new File(resources, "public/" + naming(name, false))
+                val outMin = new File(resources, "public/" + naming(name, true))
+                IO.write(out, debug)
+                dependencies.map(_ -> out) ++ min.map { minified =>
+                  IO.write(outMin, minified)
+                  dependencies.map(_ -> outMin)
+                }.getOrElse(Nil)
+              } else {
+                previousRelation.filter((original,compiled)=> original == sourceFile)._2s.map(sourceFile ->_)
+              }
+          }
         }
         //write object graph to cache file 
         Sync.writeInfo(cacheFile,
@@ -359,7 +354,7 @@ def AssetsCompiler(name: String,
     (_ ** "*.less"),
     lessEntryPoints,
     { (name, min) => name.replace(".less", if (min) ".min.css" else ".css") },
-    { (lessFile, options) => play.core.less.LessCompiler.compile(lessFile) },
+    { (lessFile, options) => play.core.less.LessCompiler.compile(lessFile, options) },
     lessOptions
   )
  

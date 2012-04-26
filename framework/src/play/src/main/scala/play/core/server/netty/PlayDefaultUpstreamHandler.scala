@@ -107,11 +107,11 @@ private[server] class PlayDefaultUpstreamHandler(server: Server, allChannels: De
           _.right.map(b =>
             new Request[action.BODY_CONTENT] {
               def uri = nettyHttpRequest.getUri
-              def path = nettyUri.getPath
+              def path = requestHeader.path
               def method = nettyHttpRequest.getMethod.getName
-              def queryString = parameters
-              def headers = rHeaders
-              lazy val remoteAddress = rRemoteAddress
+              def queryString = requestHeader.queryString
+              def headers = requestHeader.headers
+              lazy val remoteAddress = requestHeader.remoteAddress
               def username = None
               val body = b
             })
