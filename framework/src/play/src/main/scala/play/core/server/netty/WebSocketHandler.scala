@@ -39,7 +39,7 @@ private[server] trait WebSocketHandler {
       def frameReceived(ctx: ChannelHandlerContext, input: Input[A]) {
         iterateeAgent.send(iteratee =>
           iteratee.map(it => it.flatFold(
-            (a, e) => { sys.error("Getting messages on a supposedly closed socket? frame: " + input) },
+            (a, e) => { sys.warn("Getting messages on a supposedly closed socket? frame: " + input) },
             k => {
               val next = k(input)
               next.fold {
