@@ -30,7 +30,7 @@ private[server] class PlayDefaultUpstreamHandler(server: Server, allChannels: De
     Logger.trace("Exception caught in Netty", e.getCause)
     e.getChannel.close()
   }
-  
+
   override def channelConnected(ctx: ChannelHandlerContext, e: ChannelStateEvent) {
     Option(ctx.getPipeline.get(classOf[SslHandler])).map { sslHandler =>
       sslHandler.handshake()
@@ -48,44 +48,45 @@ private[server] class PlayDefaultUpstreamHandler(server: Server, allChannels: De
       response: Response,
       ctx: ChannelHandlerContext, 
       e: MessageEvent,
+      nettyUri: QueryStringDecoder,
+      parameters: Map[String,Seq[String]],
+      rRemoteAddress : String,
       app: Option[Application]
   ){
     val bodyParser = action.parser
 
     val eventuallyBodyParser = server.getBodyParser[action.BODY_CONTENT](requestHeader, bodyParser)
-
+    
     val _ =
       eventuallyBodyParser.flatMap { bodyParser =>
-
+    
         requestHeader.headers.get("Expect") match {
           case Some("100-continue") => {
-            bodyParser.pureFold(
-              (_, _) => (),
-              k => {
+            bodyParser.pureFold {
+              case Step.Done(_, _) => ()
+              case Step.Cont(k) => {
                 val continue = new DefaultHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.CONTINUE)
                 e.getChannel.write(continue)
-                
-              },
-              (_, _) => ()
-            )
-
+    
+              }
+              case Step.Error(_, _) => ()
+            }
           }
           case _ => Promise.pure()
         }
-     }
-
-
+      }
+    
     val eventuallyResultOrBody = if (nettyHttpRequest.isChunked) {
-
-        val ( result, handler) = newRequestBodyHandler(eventuallyBodyParser,allChannels, server)
-
-        val p: ChannelPipeline = ctx.getChannel().getPipeline()
-        p.replace("handler", "handler", handler)
-
-        result
-
+    
+      val (result, handler) = newRequestBodyHandler(eventuallyBodyParser, allChannels, server)
+    
+      val p: ChannelPipeline = ctx.getChannel().getPipeline()
+      p.replace("handler", "handler", handler)
+    
+      result
+    
     } else {
-
+    
       lazy val bodyEnumerator = {
         val body = {
           val cBuffer = nettyHttpRequest.getContent()
@@ -95,11 +96,11 @@ private[server] class PlayDefaultUpstreamHandler(server: Server, allChannels: De
         }
         Enumerator(body).andThen(Enumerator.enumInput(EOF))
       }
-
+    
       eventuallyBodyParser.flatMap(it => bodyEnumerator |>> it): Promise[Iteratee[Array[Byte], Either[Result, action.BODY_CONTENT]]]
-
+    
     }
-
+    
     val eventuallyResultOrRequest =
       eventuallyResultOrBody
         .flatMap(it => it.run)
@@ -107,16 +108,16 @@ private[server] class PlayDefaultUpstreamHandler(server: Server, allChannels: De
           _.right.map(b =>
             new Request[action.BODY_CONTENT] {
               def uri = nettyHttpRequest.getUri
-              def path = requestHeader.path
+              def path = nettyUri.getPath
               def method = nettyHttpRequest.getMethod.getName
-              def queryString = requestHeader.queryString
-              def headers = requestHeader.headers
-              lazy val remoteAddress = requestHeader.remoteAddress
+              def queryString = parameters
+              def headers = getHeaders(nettyHttpRequest)
+              lazy val remoteAddress = rRemoteAddress
               def username = None
               val body = b
             })
         }
-
+    
     eventuallyResultOrRequest.extend(_.value match {
       case Redeemed(Left(result)) => {
         Logger("play").trace("Got direct result from the BodyParser: " + result)
@@ -129,8 +130,8 @@ private[server] class PlayDefaultUpstreamHandler(server: Server, allChannels: De
             server.invoke(request, response, action.asInstanceOf[Action[action.BODY_CONTENT]], a)
           case None =>
             response.handle( action( request ))
-        } 
-      }
+        }
+      } 
       case error => {
         Logger("play").error("Cannot invoke the action, eventually got an error: " + error)
         response.handle(Results.InternalServerError)
@@ -343,9 +344,11 @@ private[server] class PlayDefaultUpstreamHandler(server: Server, allChannels: De
                 response,
                 ctx, 
                 e,
+                nettyUri,
+                parameters,
+                rRemoteAddress,
                 Some(app)
             )
-
           }
 
           //execute websocket action
@@ -381,6 +384,9 @@ private[server] class PlayDefaultUpstreamHandler(server: Server, allChannels: De
                 response,
                 ctx, 
                 e,
+                nettyUri,
+                parameters,
+                rRemoteAddress,
                 None
             )
           }

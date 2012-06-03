@@ -20,6 +20,7 @@ trait PlayExceptions {
     def input = problem.position.sourceFile.map(scalax.file.Path(_))
     def sourceName = problem.position.sourceFile.map(_.getAbsolutePath)
     override def sourceType: Option[String] = Some( "scala" )
+    override def toString =  "in " + sourceName.getOrElse("")+" - "+ super.toString()
   }
 
   case class TemplateCompilationException(source: File, message: String, atLine: Int, column: Int) extends PlayException(
@@ -29,6 +30,7 @@ trait PlayExceptions {
     def input = Some(scalax.file.Path(source))
     def sourceName = Some(source.getAbsolutePath)
     override def sourceType: Option[String] = Some( "html" )
+    override def toString =  "in " + source.getAbsolutePath+" - "+ super.toString()
   }
 
   case class RoutesCompilationException(source: File, message: String, atLine: Option[Int], column: Option[Int]) extends PlayException(
@@ -37,6 +39,7 @@ trait PlayExceptions {
     def position = column
     def input = Some(scalax.file.Path(source))
     def sourceName = Some(source.getAbsolutePath)
+    override def toString =  "in " + source.getAbsolutePath+" - "+ super.toString()
   }
 
   case class AssetCompilationException(source: Option[File], message: String, atLine: Option[Int], atColumn: Option[Int]) extends PlayException(
@@ -45,6 +48,8 @@ trait PlayExceptions {
     def position = atColumn
     def input = source.filter(_.exists()).map(scalax.file.Path(_))
     def sourceName = source.map(_.getAbsolutePath)
+    override def toString =  "in " + sourceName.getOrElse("")+" - "+ super.toString()
+
   }
 
 }

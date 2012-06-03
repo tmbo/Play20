@@ -176,7 +176,7 @@
 			}
 		</style>
 	</head>
-	<body>
+	<body id="play-error-page">
 		<h1>@error.title</h1>
 
 		<p id="detail">
@@ -198,47 +198,46 @@
 			case source:play.api.PlayException.ExceptionSource => {
 
 				@source.sourceName.map { name =>
-					  <div id="savebuttonholder">
-              <button  id="reloadbtn" class="button" type="submit" onClick="saveAndReload()" data-loading-text=" compiling ..." autocomplete="off">
-                <i class="icon-refresh"></i> Save 'n reload
-              </button>
-            </div>
-  				  <h2>
-						  In @name @source.line.map { line =>
-  							at line @line.
-  						}
+					<div id="savebuttonholder">
+						<button  id="reloadbtn" class="button" type="submit" onClick="saveAndReload()" data-loading-text=" compiling ..." autocomplete="off">
+							<i class="icon-refresh"></i> Save 'n reload
+						</button>
+					</div>
+					<h2>
+						In @name @source.line.map { line =>
+							at line @line.
+						}
 						</h2>
 						<div id="editor">@source.allLines.get</div>					
-				    <script>
-						    window.onload = function() {
-				          window.aceEditor = ace.edit("editor");
-				          aceEditor.setTheme("ace/theme/twilight");
-				          @source.sourceType.map{ t =>
-				            aceEditor.getSession().setMode("ace/mode/@t");
-				          }
-				          setTimeout ( function(){
-                  @source.line.map{ line =>
-                    @source.position.map{ position =>
-                      aceEditor.moveCursorTo(@(line-1),@(position-1));
-                    }.getOrElse{
-                      aceEditor.moveCursorTo(@(line-1));
-                    }
-                  }
-                  }, 50 );
-				        };
-                function saveAndReload(){
-                  $("#reloadbtn").html("compiling ...").addClass("disabled")
-						      var content = window.aceEditor.getSession().getValue();
-                  $.post("@@editor/save",{
-                    "fileName" : "@name",
-                    "fileContent" : content
-                  }).done( function(){ 
-                    window.location.reload();
-                  });
-						    };
-						</script>
+					<script>
+						window.onload = function() {
+							window.aceEditor = ace.edit("editor");
+							aceEditor.setTheme("ace/theme/twilight");
+							@source.sourceType.map{ t =>
+								aceEditor.getSession().setMode("ace/mode/@t");
+							}
+							setTimeout ( function(){
+								@source.line.map{ line =>
+									@source.position.map{ position =>
+										aceEditor.moveCursorTo(@(line-1),@(position-1));
+									}.getOrElse{
+										aceEditor.moveCursorTo(@(line-1));
+									}
+								}
+							}, 50 );
+						};
+						function saveAndReload(){
+							$("#reloadbtn").html("compiling ...").addClass("disabled");
+							var content = window.aceEditor.getSession().getValue();
+							$.post("@@editor/save",{
+								"fileName" : "@name",
+								"fileContent" : content
+							}).done( function(){ 
+								window.location.reload();
+							});
+						};
+					</script>
 				}
-
 			}
 			
 			case attachment:play.api.PlayException.ExceptionAttachment => {
@@ -280,7 +279,7 @@
 		}
 		<script src="@@editor/resources/src/ace.js" type="text/javascript" charset="utf-8"></script>
 		<script src="@@editor/resources/src/theme-twilight.js" type="text/javascript" charset="utf-8"></script>
-    <script src="@@editor/resources/lib/jquery-1.7.1.js" type="text/javascript" charset="utf-8"></script>
+		<script src="@@editor/resources/lib/jquery-1.7.1.js" type="text/javascript" charset="utf-8"></script>
 		</body>
 </html>
 
