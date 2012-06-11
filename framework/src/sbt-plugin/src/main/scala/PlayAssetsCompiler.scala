@@ -32,8 +32,9 @@ trait PlayAssetsCompiler {
         //a changed file can be either a new file, a deleted file or a modified one
         lazy val changedFiles: Seq[File] = currentInfos.filter(e=> !previousInfo.get(e._1).isDefined || previousInfo(e._1).lastModified < e._2.lastModified).map(_._1).toSeq ++ previousInfo.filter(e=> !currentInfos.get(e._1).isDefined).map(_._1).toSeq
        
-        previousRelation.filter((original,compiled)=> !incrementalAssetsCompilation || changedFiles.contains(original))._2s.foreach(IO.delete)
- 
+        val dependencies = previousRelation.filter((original, compiled) => !incrementalAssetsCompilation || changedFiles.contains(original))._2s
+        dependencies.foreach(IO.delete)
+        
         val t = System.currentTimeMillis()
         val generated: Seq[(File, java.io.File)] = 
         (files x relativeTo(Seq(src / "assets"))).flatMap {
