@@ -220,7 +220,6 @@ case class Macro( name: String, paramString: String, coffeeBody: CoffeeFile ) {
       matchObj <- macroRx.findFirstMatchIn( block.content )
     } yield {
       val (actual, paramString, afterMatch) = extractActualParams(matchObj.after.toString)
-      println( actual + " ||| "+ paramString + " ||| "+afterMatch+ " |||")
       val preMacro = matchObj.group( 1 )
       val pastMacro = afterMatch.takeWhile( _ != '\n')
       val additionalIndent = preMacro.trim match {
