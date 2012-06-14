@@ -23,7 +23,7 @@ object Patterns {
       "\\)" +
       "\\s*\\->[ \\t]*\\n"
 
-  val PreviousToMacroUsage = "(([ \\t]*)[^\\n]*?[^a-zA-Z0-9_\\-])"
+  val PreviousToMacroUsage = "(([ \\t]*)[^\\n]*?(?:[^a-zA-Z0-9_\\-]|^))"
 
   val DependenciesPattern = "###\\s*define([^#]*)###"
   val DependenciePattern = "\\s*([^\"\\n\\s\\:]+)\\s*:\\s*([^\"\\n\\s\\:]+)\\s*"
