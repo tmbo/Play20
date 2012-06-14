@@ -135,7 +135,7 @@ case class Macro( name: String, paramString: String, coffeeBody: CoffeeFile ) {
 
   val multipleParams = params.map( _ => GroupedParamPattern ).mkString( "," )
 
-  val macroRx = new Regex( PreviousToMacroUsage + name + "\\(" + multipleParams + "\\)" )
+  val macroRx = new Regex( PreviousToMacroUsage + name + "\\(" )
 
   val paramsRx = params.map { p =>
     ( "(" + NoIdentifierCharPattern + ")" + p + "(" + NoIdentifierCharPattern + ")" ).r
@@ -184,13 +184,45 @@ case class Macro( name: String, paramString: String, coffeeBody: CoffeeFile ) {
     }
   }
   
+  def extractActualParams( block: String): Tuple3[Seq[String], String, String] = {
+    var params: List[String] = Nil
+    var parenthesis = 1
+    var currentPosition = 0
+    var charsToProcess = block
+    var totalCount = 0
+    while( parenthesis>0){
+      charsToProcess.charAt(currentPosition) match{
+        case '(' =>
+          parenthesis+=1
+        case ')' =>
+          parenthesis-=1
+          if( parenthesis == 0){
+            val (param,tail) = charsToProcess.splitAt(currentPosition)
+            params ::= param
+            charsToProcess = tail.drop(1)
+          }
+        case ',' if parenthesis == 1 =>
+          val (param,tail) = charsToProcess.splitAt(currentPosition)
+          params ::= param
+          charsToProcess = tail.drop(1)
+          currentPosition = -1
+        case _ =>
+          
+      }
+      currentPosition+=1
+      totalCount+=1
+    }
+    (params.map(_.trim).reverse, block.take(totalCount), charsToProcess)
+  }
+  
   def processOneUsage( block: CoffeeFile ): Option[CoffeeFile] = {
     for {
       matchObj <- macroRx.findFirstMatchIn( block.content )
     } yield {
-      val actual = 3 to matchObj.groupCount map ( matchObj.group )
+      val (actual, paramString, afterMatch) = extractActualParams(matchObj.after.toString)
+      println( actual + " ||| "+ paramString + " ||| "+afterMatch+ " |||")
       val preMacro = matchObj.group( 1 )
-      val pastMacro = matchObj.after.toString.takeWhile( _ != '\n')
+      val pastMacro = afterMatch.takeWhile( _ != '\n')
       val additionalIndent = preMacro.trim match {
         case "" => ""
         case _  => "\t"
@@ -199,7 +231,7 @@ case class Macro( name: String, paramString: String, coffeeBody: CoffeeFile ) {
       val result = preMacro +: indentBlock( body, indent ) :+ pastMacro
 
       val start = matchObj.before.toString.count( _ == '\n' )
-      val size = matchObj.matched.count( _ == '\n' )
+      val size = (matchObj.matched + paramString).count( _ == '\n' )
       val replaced = result.map( _.format( actual: _* ).replaceAll( "%%", "%" ) )
       
       block.blockTil( start ) ++
