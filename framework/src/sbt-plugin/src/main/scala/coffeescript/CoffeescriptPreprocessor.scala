@@ -135,7 +135,7 @@ case class Macro( name: String, paramString: String, coffeeBody: CoffeeFile ) {
 
   val multipleParams = params.map( _ => GroupedParamPattern ).mkString( "," )
 
-  val macroRx = new Regex( PreviousToMacroUsage + "(?<![^a-zA-Z0-9])" + name + "\\(" )
+  val macroRx = new Regex( PreviousToMacroUsage + "(?<![a-zA-Z0-9])" + name + "\\(" )
 
   val paramsRx = params.map { p =>
     ( "(" + NoIdentifierCharPattern + ")" + p + "(" + NoIdentifierCharPattern + ")" ).r
