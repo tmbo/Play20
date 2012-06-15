@@ -23,7 +23,7 @@ object Patterns {
       "\\)" +
       "\\s*\\->[ \\t]*\\n"
 
-  val PreviousToMacroUsage = "(([ \\t]*)([^\\n]*?[^a-zA-Z0-9\\n])?)"
+  val PreviousToMacroUsage = "(([ \\t]*)[^\\n]*?)"
 
   val DependenciesPattern = "###\\s*define([^#]*)###"
   val DependenciePattern = "\\s*([^\"\\n\\s\\:]+)\\s*:\\s*([^\"\\n\\s\\:]+)\\s*"
@@ -79,10 +79,6 @@ object CoffeescriptPreprocessor {
     val coffeeFile = CoffeeFile.fromString( fileContent )
     val f = processDependencies( coffeeFile )
     val result = processMacros( f )
-    println(file.getAbsolutePath)
-    result.content.split("\n").zipWithIndex.map{
-      case (i,s) => println( s + " | "+ i)
-    }
     result.content -> result.lineMapping
   }
 
@@ -139,7 +135,7 @@ case class Macro( name: String, paramString: String, coffeeBody: CoffeeFile ) {
 
   val multipleParams = params.map( _ => GroupedParamPattern ).mkString( "," )
 
-  val macroRx = new Regex( PreviousToMacroUsage + "(?<![^a-zA-Z0-9_])" + name + "\\(" )
+  val macroRx = new Regex( PreviousToMacroUsage + "(?<![^a-zA-Z0-9])" + name + "\\(" )
 
   val paramsRx = params.map { p =>
     ( "(" + NoIdentifierCharPattern + ")" + p + "(" + NoIdentifierCharPattern + ")" ).r
@@ -246,7 +242,7 @@ case class Macro( name: String, paramString: String, coffeeBody: CoffeeFile ) {
   def process( block: CoffeeFile ) = {
     var result = block
     var foundMacro = true
-    println("MACRORX: "+macroRx)
+    
     while ( foundMacro ) {
 
       processOneUsage( result ) match {
