@@ -1,7 +1,11 @@
 package play.api.libs.iteratee
 
 import play.api.libs.concurrent._
+import play.api.libs.concurrent.execution.defaultContext
 
+/**
+ * various helper methods to constract, compose and traverse Iteratees
+ */ 
 object Iteratee {
 
   /**
@@ -34,7 +38,7 @@ object Iteratee {
 
       case Input.EOF => Done(s, Input.EOF)
       case Input.Empty => Cont[E, A](i => step(s)(i))
-      case Input.El(e) => { val s1 = f(s, e); Cont[E, A](i => step(s1)(i)) }
+      case Input.El(e) => {  val s1 = f(s, e); Cont[E, A](i => step(s1)(i)) }
     }
     (Cont[E, A](i => step(state)(i)))
   }
@@ -115,10 +119,10 @@ object Iteratee {
   def consume[E] = new {
     def apply[B, That]()(implicit t: E => TraversableOnce[B], bf: scala.collection.generic.CanBuildFrom[E, B, That]): Iteratee[E, That] = {
       fold[E, Seq[E]](Seq.empty) { (els, chunk) =>
-        els :+ chunk
+        chunk +: els
       }.mapDone { elts =>
         val builder = bf()
-        elts.foreach(builder ++= _)
+        elts.reverse.foreach(builder ++= _)
         builder.result()
       }
     }
@@ -134,7 +138,7 @@ object Iteratee {
       Cont(step)
   }
 
-  def getChunks[E]: Iteratee[E,List[E]] = fold[E, List[E]](Nil) { (els, chunk) => els :+ chunk }
+  def getChunks[E]: Iteratee[E,List[E]] = fold[E, List[E]](Nil) { (els, chunk) => chunk +: els }.map(_.reverse)
 
   def skipToEof[E]: Iteratee[E,Unit] = {
     def cont: Iteratee[E,Unit] = Cont {
@@ -240,6 +244,32 @@ object Step {
 }
 
 /**
+ * An Iteratee consumes a stream of elements of type E, producing a result of type A.
+ * The stream itself is represented by the Input trait. An Iteratee is an immutable
+ * data type, so each step in consuming the stream generates a new Iteratee with a new
+ * state.
+ *
+ * At a high level, an Iteratee is just a function that takes a piece of input and
+ * returns either a final result or a new function that takes another piece of input.
+ * To represent this, an Iteratee can be in one of three states
+ * (see the [[play.api.libs.iteratee.Step]] trait):
+ * [[play.api.libs.iteratee.Done]], which means it contains a result and potentially some unconsumed part of the stream;
+ * [[play.api.libs.iteratee.Cont]], which means it contains a function to be invoked to generate a new Iteratee from the next piece of input;
+ * [[play.api.libs.iteratee.Error]], which means it contains an error message and potentially some unconsumed part of the stream.
+ *
+ * One would expect to transform an Iteratee through the Cont state N times, eventually
+ * arriving at either the Done or Error state.
+ *
+ * Typically an [[play.api.libs.iteratee.Enumerator]] would be used to
+ * push data into an Iteratee by invoking the function in the [[play.api.libs.iteratee.Cont]]
+ * state until either 1) the iteratee leaves the Cont state or 2) the enumerator
+ * runs out of data.
+ *
+ * The Iteratee does not do any resource management (such as closing streams);
+ * the producer pushing stuff into the Iteratee has that responsibility.+ *
+ * The state of an Iteratee (the current [[play.api.libs.iteratee.Step]] may not be available
+ * synchronously; it may be pending an asynchronous computation. This is the difference
+ * between Iteratee and Step.
  * @tparam E Input type
  * @tparam A Result type of this Iteratee
  */
@@ -248,9 +278,14 @@ trait Iteratee[E, +A] {
 
   /**
    * Extracts the computed result of the Iteratee pushing an Input.EOF if necessary
-   *
-   *  @return a [[play.api.libs.concurrent.Promise]] of the eventually computed result
-   */
+   * Extracts the computed result of the Iteratee, pushing an Input.EOF first
+   * if the Iteratee is in the [[play.api.libs.iteratee.Cont]] state.
+   * In case of error, an exception may be thrown synchronously or may
+   * be used to complete the returned Promise; this indeterminate behavior
+   * is inherited from fold().
+    *
+    *  @return a [[play.api.libs.concurrent.Promise]] of the eventually computed result
+    */
   def run[AA >: A]: Promise[AA] = fold({
     case Step.Done(a,_) => Promise.pure(a)
     case Step.Cont(k) => k(Input.EOF).fold({
@@ -261,10 +296,20 @@ trait Iteratee[E, +A] {
     case Step.Error(msg,e) => sys.error(msg)
   })
 
+  /**
+   * Sends one element of input to the Iteratee and returns a promise
+   * containing the new Iteratee. The promise may or may not be completed
+   * already when it's returned (the iteratee may use an asynchronous operation to handle
+   * the input).
+   * @param in input being sent
+   */
   def feed[AA >: A](in: Input[E]): Promise[Iteratee[E, AA]] = {
     Enumerator.enumInput(in) |>> this
   }
 
+ /**
+  * Converts the Iteratee into a Promise containing its state. 
+  */
   def unflatten: Promise[Step[E,A]] = pureFold(identity)
 
   /**
@@ -283,6 +328,16 @@ trait Iteratee[E, +A] {
       case Step.Error(msg,e) => error(msg,e)
     })
 
+  /**
+   * Computes a promised value B from the state of the Iteratee.
+   * Note that the state of the Iteratee may be computed asynchronously,
+   * so the folder function may run asynchronously in another thread,
+   * but is not guaranteed to do so. Exceptions thrown by the folder function
+   * may be stored in the returned Promise or may be thrown from `fold()`.
+   *
+   * If the folder function itself is synchronous, it's better to
+   * use `pureFold()` instead of `fold()`.
+   */  
   def fold[B](folder: Step[E,A] => Promise[B]): Promise[B]
 
   /**
@@ -397,7 +452,7 @@ object Done {
    * @param a Result
    * @param e Remaining unused input
    */
-  def apply[E, A](a: A, e: Input[E]): Iteratee[E, A] = new Iteratee[E, A] {
+  def apply[E, A](a: A, e: Input[E] = Input.Empty): Iteratee[E, A] = new Iteratee[E, A] {
 
     def fold[B](folder: Step[E,A] => Promise[B]): Promise[B] = folder(Step.Done(a,e))
 

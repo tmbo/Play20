@@ -11,6 +11,8 @@ import org.openqa.selenium._
 import org.openqa.selenium.firefox._
 import org.openqa.selenium.htmlunit._
 
+import play.api.libs.concurrent.execution.defaultContext
+
 /**
  * Helper functions to run tests.
  */
@@ -34,6 +36,10 @@ object Helpers extends Status with HeaderNames {
       block
     } finally {
       Play.stop()
+      play.api.libs.concurrent.Promise.resetSystem()
+      play.core.Invoker.system.shutdown()
+      play.core.Invoker.uninit()
+      play.api.libs.ws.WS.resetClient()
     }
   }
 
@@ -110,7 +116,7 @@ object Helpers extends Status with HeaderNames {
   def contentAsBytes(of: Result): Array[Byte] = of match {
     case r @ SimpleResult(_, bodyEnumerator) => {
       var readAsBytes = Enumeratee.map[r.BODY_CONTENT](r.writeable.transform(_)).transform(Iteratee.consume[Array[Byte]]())
-      bodyEnumerator(readAsBytes).flatMap(_.run).value.get
+      bodyEnumerator(readAsBytes).flatMap(_.run).value1.get
     }
     case AsyncResult(p) => contentAsBytes(p.await.get)
     case r => sys.error("Cannot extract the body content from a result of type " + r.getClass.getName)
@@ -120,7 +126,7 @@ object Helpers extends Status with HeaderNames {
    * Extracts the Status code of this Result value.
    */
   def status(of: Result): Int = of match {
-    case Result(status, _) => status
+    case PlainResult(status, _) => status
     case AsyncResult(p) => status(p.await.get)
     case r => sys.error("Cannot extract the status from a result of type " + r.getClass.getName)
   }
@@ -134,7 +140,7 @@ object Helpers extends Status with HeaderNames {
    * Extracts the Flash values of this Result value.
    */
   def flash(of: Result): Flash = Flash.decodeFromCookie(cookies(of).get(Flash.COOKIE_NAME))
-  
+
   /**
    * Extracts the Session of this Result value.
    * Extracts the Session from this Result value.
@@ -145,11 +151,11 @@ object Helpers extends Status with HeaderNames {
    * Extracts the Location header of this Result value if this Result is a Redirect.
    */
   def redirectLocation(of: Result): Option[String] = of match {
-    case Result(FOUND, headers) => headers.get(LOCATION)
-    case Result(SEE_OTHER, headers) => headers.get(LOCATION)
-    case Result(TEMPORARY_REDIRECT, headers) => headers.get(LOCATION)
-    case Result(MOVED_PERMANENTLY, headers) => headers.get(LOCATION)
-    case Result(_, _) => None
+    case PlainResult(FOUND, headers) => headers.get(LOCATION)
+    case PlainResult(SEE_OTHER, headers) => headers.get(LOCATION)
+    case PlainResult(TEMPORARY_REDIRECT, headers) => headers.get(LOCATION)
+    case PlainResult(MOVED_PERMANENTLY, headers) => headers.get(LOCATION)
+    case PlainResult(_, _) => None
     case AsyncResult(p) => redirectLocation(p.await.get)
     case r => sys.error("Cannot extract the headers from a result of type " + r.getClass.getName)
   }
@@ -163,7 +169,7 @@ object Helpers extends Status with HeaderNames {
    * Extracts all Headers of this Result value.
    */
   def headers(of: Result): Map[String, String] = of match {
-    case Result(_, headers) => headers
+    case PlainResult(_, headers) => headers
     case AsyncResult(p) => headers(p.await.get)
     case r => sys.error("Cannot extract the headers from a result of type " + r.getClass.getName)
   }

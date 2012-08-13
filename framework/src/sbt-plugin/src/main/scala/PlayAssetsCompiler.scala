@@ -17,8 +17,14 @@ trait PlayAssetsCompiler {
     naming: (String, Boolean) => String,
     compile: (File, Seq[String]) => (String, Option[String], Seq[File]),
     optionsSettings: sbt.SettingKey[Seq[String]]) =
-    (sourceDirectory in Compile, resourceManaged in Compile, cacheDirectory, optionsSettings, filesSetting, incrementalAssetsCompilation) map { (src, resources, cache, options, files, incrementalAssetsCompilation) =>
- 
+    (sourceDirectory in Compile, resourceManaged in Compile, cacheDirectory, optionsSettings, filesSetting, incrementalAssetsCompilation, requireSubFolder) map { (src, resources, cache, options, files, incrementalAssetsCompilation, requireSubFolder) =>
+      
+      val require = (src / "assets" / name / requireSubFolder)
+   
+      val requireSupport = if (require.exists) {
+        Seq("rjs")
+      } else Seq[String]()
+
       import java.io._
  
       val cacheFile = cache / name
@@ -39,8 +45,8 @@ trait PlayAssetsCompiler {
         val generated: Seq[(File, java.io.File)] = 
         (files x relativeTo(Seq(src / "assets"))).flatMap {
           case (sourceFile, name) => {
-              if (!incrementalAssetsCompilation || changedFiles.contains(sourceFile)) {
-                val (debug, min, dependencies) = compile(sourceFile, options)
+              if (!incrementalAssetsCompilation || changedFiles.contains(sourceFile) || dependencies.contains(new File(resources, "public/" + naming(name, false)))) {
+                val (debug, min, dependencies) = compile(sourceFile, options ++ requireSupport)
                 val out = new File(resources, "public/" + naming(name, false))
                 val outMin = new File(resources, "public/" + naming(name, true))
                 IO.write(out, debug)

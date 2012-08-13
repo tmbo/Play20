@@ -52,6 +52,12 @@ trait GlobalSettings {
   def configuration: Configuration = Configuration.empty
 
   /**
+   * Called Just before the action is used.
+   *
+   */
+  def doFilter(a:EssentialAction):EssentialAction = a
+
+  /**
    * Called when an HTTP request has been received.
    *
    * The default is to use the application router to find the appropriate action.
@@ -110,6 +116,11 @@ trait GlobalSettings {
    */
   def onBadRequest(request: RequestHeader, error: String): Result = {
     BadRequest(views.html.defaultpages.badRequest(request, error))
+  }
+
+  def onRequestCompletion(request:RequestHeader){
+
+
   }
 
 }
