@@ -18,8 +18,9 @@ trait PlayReloader {
 
       def projectPath = extracted.currentProject.base
 
-      def watchFiles = extracted.runTask(watchTransitiveSources, state)._2
-      
+      def watchFiles = {
+        ((extracted.currentProject.base / "conf") ** "*").get
+      }
 
       // ----- Internal state used for reloading is kept here
 

@@ -22,7 +22,7 @@ object PlayProject extends Plugin with PlayExceptions with PlayKeys with PlayRel
     case _ =>
   }
 
-  private def whichLang(name: String): Seq[Setting[_]] = {
+  private def whichLang(name: String) = {
     if (name == JAVA) {
       defaultJavaSettings
     } else if (name == SCALA) {
