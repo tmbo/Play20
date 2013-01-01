@@ -1,5 +1,7 @@
 package play.api.i18n
 
+import scala.language.postfixOps
+
 import play.api._
 import play.core._
 
@@ -8,6 +10,7 @@ import java.io._
 import scala.util.parsing.input._
 import scala.util.parsing.combinator._
 import scala.util.matching._
+import scala.util.control.NonFatal
 
 /**
  * A Lang supported by the application.
@@ -53,7 +56,7 @@ object Lang {
    */
   def apply(code: String): Lang = {
     get(code).getOrElse(
-                   sys.error("Unrecognized language: %s".format(code))
+      sys.error("Unrecognized language: %s".format(code))
     )
   }
 
@@ -80,7 +83,7 @@ object Lang {
     app.configuration.getString("application.langs").map { langs =>
       langs.split(",").map(_.trim).map { lang =>
         try { Lang(lang) } catch {
-          case e => throw app.configuration.reportError("application.langs", "Invalid language code [" + lang + "]", Some(e))
+          case NonFatal(e) => throw app.configuration.reportError("application.langs", "Invalid language code [" + lang + "]", Some(e))
         }
       }.toSeq
     }.getOrElse(Nil)
@@ -143,20 +146,6 @@ object Messages {
     override def skipWhitespace = false
     override val whiteSpace = """[ \t]+""".r
 
-    override def phrase[T](p: Parser[T]) = new Parser[T] {
-      lastNoSuccess = null
-      def apply(in: Input) = p(in) match {
-        case s @ Success(out, in1) =>
-          if (in1.atEnd)
-            s
-          else if (lastNoSuccess == null || lastNoSuccess.next.pos < in1.pos)
-            Failure("end of input expected", in1)
-          else
-            lastNoSuccess
-        case _ => lastNoSuccess
-      }
-    }
-
     def namedError[A](p: Parser[A], msg: String) = Parser[A] { i =>
       p(i) match {
         case Failure(_, in) => Failure(msg, in)
@@ -172,17 +161,17 @@ object Messages {
     def comment = """#.*""".r ^^ { case s => Comment(s) }
 
     def messageKey = namedError("""[a-zA-Z0-9_.]+""".r, "Message key expected")
-    
+
     def messagePattern = namedError(
       rep(
         """\""" ~> ("\r"?) ~> "\n" ^^ (_ => "") | // Ignore escaped end of lines \
-        """\n""" ^^ (_ => "\n") | // Translate literal \n to real newline
-        """\\""" ^^ (_ => """\""") | // Handle escaped \\
-        """.""".r // Or any character
-      ) ^^ { case chars => chars.mkString }, 
+          """\n""" ^^ (_ => "\n") | // Translate literal \n to real newline
+          """\\""" ^^ (_ => """\""") | // Handle escaped \\
+          """.""".r // Or any character
+      ) ^^ { case chars => chars.mkString },
       "Message pattern expected"
     )
-    
+
     def message = ignoreWhiteSpace ~ messageKey ~ (ignoreWhiteSpace ~ "=" ~ ignoreWhiteSpace) ~ messagePattern ^^ {
       case (_ ~ k ~ _ ~ v) => Messages.Message(k, v.trim, messageInput, messageSourceName)
     }
@@ -196,14 +185,14 @@ object Messages {
     }
 
     def parse = {
-      parser(new CharSequenceReader(messageInput.slurpString + "\n")) match {
+      parser(new CharSequenceReader(messageInput.string + "\n")) match {
         case Success(messages, _) => messages
         case NoSuccess(message, in) => {
-          throw new PlayException("Configuration error", message) with PlayException.ExceptionSource {
-            def line = Some(in.pos.line)
-            def position = Some(in.pos.column - 1)
-            def input = Some(messageInput)
-            def sourceName = Some(messageSourceName)
+          throw new PlayException.ExceptionSource("Configuration error", message) {
+            def line = in.pos.line
+            def position = in.pos.column - 1
+            def input = messageInput.string
+            def sourceName = messageSourceName
           }
         }
       }

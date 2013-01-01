@@ -7,6 +7,7 @@ import org.w3c.dom.*;
 import org.codehaus.jackson.*;
 
 import play.i18n.Lang;
+import play.Play;
 
 /**
  * Defines HTTP standard objects.
@@ -33,9 +34,8 @@ public class Http {
 
         //
 
-        private static java.util.concurrent.atomic.AtomicLong idGenerator = new java.util.concurrent.atomic.AtomicLong();
-        private final Long id = idGenerator.incrementAndGet();
-
+        private final Long id;
+        private final play.api.mvc.RequestHeader header;
         private final Request request;
         private final Response response;
         private final Session session;
@@ -51,11 +51,14 @@ public class Http {
          * @param sessionData the session data extracted from the session cookie
          * @param flashData the flash data extracted from the flash cookie
          */
-        public Context(Request request, Map<String,String> sessionData, Map<String,String> flashData) {
+        public Context(Long id, play.api.mvc.RequestHeader header, Request request, Map<String,String> sessionData, Map<String,String> flashData, Map<String,Object> args) {
+            this.id = id;
+            this.header = header;
             this.request = request;
             this.response = new Response();
             this.session = new Session(sessionData);
             this.flash = new Flash(flashData);
+            this.args = new HashMap<String,Object>(args);
         }
 
         /**
@@ -94,13 +97,21 @@ public class Http {
         }
 
         /**
+         * The original Play request Header used to create this context. 
+         * For internal usage only.
+         */
+        public play.api.mvc.RequestHeader _requestHeader() {
+            return header;
+        }
+
+        /**
          * @return the current lang.
          */
         public Lang lang() {
             if (lang != null) {
                 return lang;
             } else {
-                Cookie cookieLang = request.cookie(langCookieName());
+                Cookie cookieLang = request.cookie(Play.langCookieName());
                 if (cookieLang != null) {
                     Lang lang = Lang.forCode(cookieLang.value());
                     if (lang != null) return lang;
@@ -118,21 +129,17 @@ public class Http {
             Lang lang = Lang.forCode(code);
             if (Lang.availables().contains(lang)) {
                 this.lang = lang;
-                response.setCookie(langCookieName(), code);
+                response.setCookie(Play.langCookieName(), code);
                 return true;
             } else {
                 return false;
             }
         }
 
-        private String langCookieName() {
-            return play.Configuration.root().getString("application.lang.cookie", "PLAY_LANG");
-        }
-
         /** 
          * Free space to store your request specific data
          */
-        public Map<String, Object> args = new HashMap<String, Object>(16);
+        public Map<String, Object> args;
 
         /**
          * Import in templates to get implicit HTTP context.
@@ -195,16 +202,24 @@ public class Http {
          */
         public abstract String uri();
 
-        /**
-         * The HTTP Method.
-         */
-        public abstract String method();
+      /**
+       * The HTTP Method.
+       */
+      public abstract String method();
+
+       /**
+        * The HTTP version.
+        */
+        public abstract String version();
 
         /**
          * The client IP address.
+         *
+         * If the <code>X-Forwarded-For</code> header is present, then this method will return the value in that header
+         * if either the local address is 127.0.0.1, or if <code>trustxforwarded</code> is configured to be true in the
+         * application configuration file.
          */
         public abstract String remoteAddress();
-
 
         /**
          * The request host.
@@ -216,20 +231,27 @@ public class Http {
         public abstract String path();
 
         /**
-         * The Request Langs, extracted from the Accept-Language header.
+         * The Request Langs extracted from the Accept-Language header and sorted by preference (preferred first).
          */
         public abstract List<play.i18n.Lang> acceptLanguages();
 
         /**
          * @return The media types set in the request Accept header, not sorted in any particular order.
+         * @deprecated Use {@link #acceptedTypes()} instead.
          */
+        @Deprecated
         public abstract List<String> accept();
 
         /**
-         * Check if this request accepts a given media type.
-         * @returns true if <code>mediaType</code> is in the Accept header, otherwise false
+         * @return The media types set in the request Accept header, sorted by preference (preferred first).
          */
-        public abstract boolean accepts(String mediaType);
+        public abstract List<play.api.http.MediaRange> acceptedTypes();
+
+        /**
+         * Check if this request accepts a given media type.
+         * @return true if <code>mimeType</code> is in the Accept header, otherwise false
+         */
+        public abstract boolean accepts(String mimeType);
 
         /**
          * The query string content.
@@ -491,7 +513,6 @@ public class Http {
 
         private final Map<String,String> headers = new HashMap<String,String>();
         private final List<Cookie> cookies = new ArrayList<Cookie>();
-        private final List<String> discardedCookies = new ArrayList<String>();
 
         /**
          * Adds a new header to the response.
@@ -524,16 +545,16 @@ public class Http {
          * @param value Cookie value
          */
         public void setCookie(String name, String value) {
-            setCookie(name, value, -1);
+            setCookie(name, value, null);
         }
 
         /**
          * Set a new cookie with path “/”
          * @param name Cookie name
          * @param value Cookie value
-         * @param maxAge Cookie duration (-1 for a transient cookie and 0 for a cookie that expires now)
+         * @param maxAge Cookie duration (null for a transient cookie and 0 or less for a cookie that expires now)
          */
-        public void setCookie(String name, String value, int maxAge) {
+        public void setCookie(String name, String value, Integer maxAge) {
             setCookie(name, value, maxAge, "/");
         }
 
@@ -541,10 +562,10 @@ public class Http {
          * Set a new cookie
          * @param name Cookie name
          * @param value Cookie value
-         * @param maxAge Cookie duration (-1 for a transient cookie and 0 for a cookie that expires now)
+         * @param maxAge Cookie duration (null for a transient cookie and 0 or less for a cookie that expires now)
          * @param path Cookie path
          */
-        public void setCookie(String name, String value, int maxAge, String path) {
+        public void setCookie(String name, String value, Integer maxAge, String path) {
             setCookie(name, value, maxAge, path, null);
         }
 
@@ -552,11 +573,11 @@ public class Http {
          * Set a new cookie
          * @param name Cookie name
          * @param value Cookie value
-         * @param maxAge Cookie duration (-1 for a transient cookie and 0 for a cookie that expires now)
+         * @param maxAge Cookie duration (null for a transient cookie and 0 or less for a cookie that expires now)
          * @param path Cookie path
          * @param domain Cookie domain
          */
-        public void setCookie(String name, String value, int maxAge, String path, String domain) {
+        public void setCookie(String name, String value, Integer maxAge, String path, String domain) {
             setCookie(name, value, maxAge, path, domain, false, false);
         }
 
@@ -564,13 +585,13 @@ public class Http {
          * Set a new cookie
          * @param name Cookie name
          * @param value Cookie value
-         * @param maxAge Cookie duration (-1 for a transient cookie and 0 for a cookie that expires now)
+         * @param maxAge Cookie duration (null for a transient cookie and 0 or less for a cookie that expires now)
          * @param path Cookie path
          * @param domain Cookie domain
          * @param secure Whether the cookie is secured (for HTTPS requests)
          * @param httpOnly Whether the cookie is HTTP only (i.e. not accessible from client-side JavaScript code)
          */
-        public void setCookie(String name, String value, int maxAge, String path, String domain, boolean secure, boolean httpOnly) {
+        public void setCookie(String name, String value, Integer maxAge, String path, String domain, boolean secure, boolean httpOnly) {
             cookies.add(new Cookie(name, value, maxAge, path, domain, secure, httpOnly));
         }
 
@@ -580,19 +601,65 @@ public class Http {
          * <pre>
          * response().discardCookies("theme");
          * </pre>
+         *
+         * This only discards cookies on the default path ("/") with no domain and that didn't have secure set.  To
+         * discard other cookies, use the discardCookie method.
+         *
          * @param names Names of the cookies to discard
+         * @deprecated Use the discardCookie methods instead
          */
+        @Deprecated
         public void discardCookies(String... names) {
-            discardedCookies.addAll(Arrays.asList(names));
+            for (String name: names) {
+                discardCookie(name);
+            }
+        }
+
+        /**
+         * Discard a cookie on the default path ("/") with no domain and that's not secure
+         *
+         * @param name The name of the cookie to discard
+         */
+        public void discardCookie(String name) {
+            discardCookie(name, "/", null, false);
+        }
+
+        /**
+         * Discard a cookie on the give path with no domain and not that's secure
+         *
+         * @param name The name of the cookie to discard
+         * @param path The path of the cookie te discard, may be null
+         */
+        public void discardCookie(String name, String path) {
+            discardCookie(name, path, null, false);
+        }
+
+        /**
+         * Discard a cookie on the given path and domain that's not secure
+         *
+         * @param name The name of the cookie to discard
+         * @param path The path of the cookie te discard, may be null
+         * @param domain The domain of the cookie to discard, may be null
+         */
+        public void discardCookie(String name, String path, String domain) {
+            discardCookie(name, path, domain, false);
+        }
+
+        /**
+         * Discard a cookie in this result
+         *
+         * @param name The name of the cookie to discard
+         * @param path The path of the cookie te discard, may be null
+         * @param domain The domain of the cookie to discard, may be null
+         * @param secure Whether the cookie to discard is secure
+         */
+        public void discardCookie(String name, String path, String domain, boolean secure) {
+            cookies.add(new Cookie(name, "", -1, path, domain, secure, false));
         }
 
         // FIXME return a more convenient type? e.g. Map<String, Cookie>
         public Iterable<Cookie> cookies() {
             return cookies;
-        }
-
-        public Iterable<String> discardedCookies() {
-            return discardedCookies;
         }
 
     }
@@ -705,13 +772,13 @@ public class Http {
     public static class Cookie {
         private final String name;
         private final String value;
-        private final int maxAge;
+        private final Integer maxAge;
         private final String path;
         private final String domain;
         private final boolean secure;
         private final boolean httpOnly;
 
-        public Cookie(String name, String value, int maxAge, String path,
+        public Cookie(String name, String value, Integer maxAge, String path,
                 String domain, boolean secure, boolean httpOnly) {
             this.name = name;
             this.value = value;
@@ -737,9 +804,10 @@ public class Http {
         }
 
         /**
-         * @return the cookie expiration date in seconds, -1 for a transient cookie, 0 for a cookie that expires now
+         * @return the cookie expiration date in seconds, null for a transient cookie, a value less than zero for a
+         * cookie that expires now
          */
-        public int maxAge() {
+        public Integer maxAge() {
             return maxAge;
         }
 

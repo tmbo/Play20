@@ -1,5 +1,9 @@
 package play.test;
 
+import play.*;
+
+import play.api.mvc.Session;
+import play.api.test.Helpers$;
 import play.mvc.*;
 import play.libs.*;
 import play.libs.F.*;
@@ -22,7 +26,7 @@ public class Helpers implements play.mvc.Http.Status, play.mvc.Http.HeaderNames 
     public static String HEAD = "HEAD";
 
     // --
-    
+
     public static Class<? extends WebDriver> HTMLUNIT = HtmlUnitDriver.class;
     public static Class<? extends WebDriver> FIREFOX = FirefoxDriver.class;
 
@@ -83,7 +87,21 @@ public class Helpers implements play.mvc.Http.Status, play.mvc.Http.HeaderNames 
      * Build a new fake application.
      */
     public static FakeApplication fakeApplication() {
-        return new FakeApplication(new java.io.File("."), Helpers.class.getClassLoader(), new HashMap<String,String>(), new ArrayList<String>());
+        return new FakeApplication(new java.io.File("."), Helpers.class.getClassLoader(), new HashMap<String,Object>(), new ArrayList<String>(), null);
+    }
+
+    /**
+     * Build a new fake application.
+     */
+    public static FakeApplication fakeApplication(GlobalSettings global) {
+        return new FakeApplication(new java.io.File("."), Helpers.class.getClassLoader(), new HashMap<String,Object>(), new ArrayList<String>(), global);
+    }
+
+    /**
+     * A fake Global
+     */
+    public static GlobalSettings fakeGlobal() {
+        return new GlobalSettings();
     }
 
     /**
@@ -103,16 +121,30 @@ public class Helpers implements play.mvc.Http.Status, play.mvc.Http.HeaderNames 
     /**
      * Build a new fake application.
      */
-    public static FakeApplication fakeApplication(Map<String,String> additionalConfiguration) {
-        return new FakeApplication(new java.io.File("."), Helpers.class.getClassLoader(), additionalConfiguration, new ArrayList<String>());
+    public static FakeApplication fakeApplication(Map<String, ? extends Object> additionalConfiguration) {
+        return new FakeApplication(new java.io.File("."), Helpers.class.getClassLoader(), additionalConfiguration, new ArrayList<String>(), null);
     }
-    
 
     /**
      * Build a new fake application.
      */
-    public static FakeApplication fakeApplication(Map<String,String> additionalConfiguration, List<String> additionalPlugin) {
-        return new FakeApplication(new java.io.File("."), Helpers.class.getClassLoader(), additionalConfiguration, additionalPlugin);
+    public static FakeApplication fakeApplication(Map<String, ? extends Object> additionalConfiguration, GlobalSettings global) {
+        return new FakeApplication(new java.io.File("."), Helpers.class.getClassLoader(), additionalConfiguration, new ArrayList<String>(), global);
+    }
+
+    /**
+     * Build a new fake application.
+     */
+    public static FakeApplication fakeApplication(Map<String, ? extends Object> additionalConfiguration, List<String> additionalPlugin) {
+        return new FakeApplication(new java.io.File("."), Helpers.class.getClassLoader(), additionalConfiguration, additionalPlugin, null);
+    }
+
+
+    /**
+     * Build a new fake application.
+     */
+    public static FakeApplication fakeApplication(Map<String, ? extends Object> additionalConfiguration, List<String> additionalPlugin, GlobalSettings global) {
+        return new FakeApplication(new java.io.File("."), Helpers.class.getClassLoader(), additionalConfiguration, additionalPlugin, global);
     }
 
     /**
@@ -133,18 +165,14 @@ public class Helpers implements play.mvc.Http.Status, play.mvc.Http.HeaderNames 
      * Extracts the Flash values of this Result value.
      */
     public static play.mvc.Http.Flash flash(Result result) {
-        return new play.mvc.Http.Flash(
-            Scala.asJava(play.api.test.Helpers.flash(result.getWrappedResult()).data())
-        );
+        return play.core.j.JavaResultExtractor.getFlash(result);
     }
 
     /**
      * Extracts the Session of this Result value.
      */
     public static play.mvc.Http.Session session(Result result) {
-        return new play.mvc.Http.Session(
-                Scala.asJava(play.api.test.Helpers.session(result.getWrappedResult()).data())
-        );
+        return play.core.j.JavaResultExtractor.getSession(result);
     }
 
     /**
@@ -241,6 +269,8 @@ public class Helpers implements play.mvc.Http.Status, play.mvc.Http.HeaderNames 
 
     /**
      * Use the Router to determine the Action to call for this request and executes it.
+     * @deprecated
+     * @see #route instead
      */
     @SuppressWarnings(value = "unchecked")
     public static Result routeAndCall(FakeRequest fakeRequest) {
@@ -255,6 +285,8 @@ public class Helpers implements play.mvc.Http.Status, play.mvc.Http.HeaderNames 
 
     /**
      * Use the Router to determine the Action to call for this request and executes it.
+     * @deprecated
+     * @see #route instead
      */
     public static Result routeAndCall(Class<? extends play.core.Router.Routes> router, FakeRequest fakeRequest) {
         try {
@@ -268,14 +300,46 @@ public class Helpers implements play.mvc.Http.Status, play.mvc.Http.HeaderNames 
             throw e;
         } catch(Throwable t) {
             throw new RuntimeException(t);
-        } 
+        }
+    }
+
+    public static Result route(FakeRequest fakeRequest) {
+      return route(play.Play.application(), fakeRequest);
+    }
+
+    public static Result route(Application app, FakeRequest fakeRequest) {
+      final play.api.mvc.Result r = play.api.test.Helpers.jRoute(app.getWrappedApplication(), fakeRequest.getWrappedRequest()).getOrElse(null);
+      if(r != null){
+        return new Result() {
+          public play.api.mvc.Result getWrappedResult(){
+            return r;
+          }
+        };
+      }
+      return null;
+    }
+
+    public static <T> Result route(Application app, FakeRequest fakeRequest, byte[] body) {
+      final play.api.mvc.Result r = play.api.test.Helpers.jRoute(app.getWrappedApplication(), fakeRequest.getWrappedRequest(), body).getOrElse(null);
+      if(r != null){
+        return new Result() {
+          public play.api.mvc.Result getWrappedResult(){
+            return r;
+          }
+        };
+      }
+      return null;
+    }
+
+    public static <T> Result route(FakeRequest fakeRequest, byte[] body) {
+      return route(play.Play.application(), fakeRequest, body);
     }
 
     /**
      * Starts a new application.
      */
     public static void start(FakeApplication fakeApplication) {
-      
+
         play.api.Play.start(fakeApplication.getWrappedApplication());
     }
 
@@ -284,21 +348,18 @@ public class Helpers implements play.mvc.Http.Status, play.mvc.Http.HeaderNames 
      */
     public static void stop(FakeApplication fakeApplication) {
         play.api.Play.stop();
+        play.api.libs.ws.WS$.MODULE$.resetClient();
     }
 
     /**
      * Executes a block of code in a running application.
      */
-    public static void running(FakeApplication fakeApplication, final Runnable block) {
+    public static synchronized void running(FakeApplication fakeApplication, final Runnable block) {
         try {
             start(fakeApplication);
             block.run();
         } finally {
             stop(fakeApplication);
-            play.api.libs.concurrent.Promise$.MODULE$.resetSystem();
-            play.core.Invoker$.MODULE$.system().shutdown();
-            play.core.Invoker$.MODULE$.uninit();
-            play.api.libs.ws.WS$.MODULE$.resetClient();
         }
     }
 
@@ -334,7 +395,7 @@ public class Helpers implements play.mvc.Http.Status, play.mvc.Http.HeaderNames 
     /**
      * Executes a block of code in a running server.
      */
-    public static void running(TestServer server, final Runnable block) {
+    public static synchronized void running(TestServer server, final Runnable block) {
         try {
             start(server);
             block.run();
@@ -346,11 +407,10 @@ public class Helpers implements play.mvc.Http.Status, play.mvc.Http.HeaderNames 
     /**
      * Executes a block of code in a running server, with a test browser.
      */
-    public static void running(TestServer server, Class<? extends WebDriver> webDriver, final Callback<TestBrowser> block) {
+    public static synchronized void running(TestServer server, Class<? extends WebDriver> webDriver, final Callback<TestBrowser> block) {
         TestBrowser browser = null;
         TestServer startedServer = null;
         try {
-            play.core.Invoker.uninit();
             start(server);
             startedServer = server;
             browser = testBrowser(webDriver);
@@ -377,9 +437,23 @@ public class Helpers implements play.mvc.Http.Status, play.mvc.Http.HeaderNames 
     /**
      * Creates a Test Browser.
      */
+    public static TestBrowser testBrowser(int port) {
+        return testBrowser(HTMLUNIT, port);
+    }
+
+    /**
+     * Creates a Test Browser.
+     */
     public static TestBrowser testBrowser(Class<? extends WebDriver> webDriver) {
+        return testBrowser(webDriver, Helpers$.MODULE$.testServerPort());
+    }
+
+    /**
+     * Creates a Test Browser.
+     */
+    public static TestBrowser testBrowser(Class<? extends WebDriver> webDriver, int port) {
         try {
-            return new TestBrowser(webDriver);
+            return new TestBrowser(webDriver, "http://localhost:" + port);
         } catch(RuntimeException e) {
             throw e;
         } catch(Throwable t) {
@@ -390,8 +464,15 @@ public class Helpers implements play.mvc.Http.Status, play.mvc.Http.HeaderNames 
     /**
      * Creates a Test Browser.
      */
+    public static TestBrowser testBrowser(WebDriver of, int port) {
+        return new TestBrowser(of, "http://localhost:" + port);
+    }
+
+    /**
+     * Creates a Test Browser.
+     */
     public static TestBrowser testBrowser(WebDriver of) {
-        return new TestBrowser(of);
+        return testBrowser(of, Helpers$.MODULE$.testServerPort());
     }
 
 }

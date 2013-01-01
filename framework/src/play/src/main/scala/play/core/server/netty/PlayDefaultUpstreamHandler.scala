@@ -1,5 +1,7 @@
 package play.core.server.netty
 
+import scala.language.reflectiveCalls
+
 import org.jboss.netty.buffer._
 import org.jboss.netty.channel._
 import org.jboss.netty.bootstrap._
@@ -23,10 +25,14 @@ import play.api.libs.iteratee._
 import play.api.libs.iteratee.Input._
 import play.api.libs.concurrent._
 import scala.collection.JavaConverters._
+import scala.util.control.NonFatal
 
-import play.api.libs.concurrent.execution.defaultContext
 
 private[server] class PlayDefaultUpstreamHandler(server: Server, allChannels: DefaultChannelGroup) extends SimpleChannelUpstreamHandler with Helpers with WebSocketHandler with RequestBodyHandler {
+
+  implicit val internalExecutionContext =  play.core.Execution.internalContext
+
+  private val requestIDs = new java.util.concurrent.atomic.AtomicLong(0)
 
   override def exceptionCaught(ctx: ChannelHandlerContext, e: ExceptionEvent) {
     Logger.trace("Exception caught in Netty", e.getCause)
@@ -57,7 +63,7 @@ private[server] class PlayDefaultUpstreamHandler(server: Server, allChannels: De
         Logger("play").trace("Http request received by netty: " + nettyHttpRequest)
         val keepAlive = isKeepAlive(nettyHttpRequest)
         val websocketableRequest = websocketable(nettyHttpRequest)
-        var version = nettyHttpRequest.getProtocolVersion
+        var nettyVersion = nettyHttpRequest.getProtocolVersion
         val nettyUri = new QueryStringDecoder(nettyHttpRequest.getUri)
         val parameters = Map.empty[String, Seq[String]] ++ nettyUri.getParameters.asScala.mapValues(_.asScala)
 
@@ -81,9 +87,12 @@ private[server] class PlayDefaultUpstreamHandler(server: Server, allChannels: De
         //mapping netty request to Play's
 
         val requestHeader = new RequestHeader {
+          val id = requestIDs.incrementAndGet
+          val tags = Map.empty[String,String]
           def uri = nettyHttpRequest.getUri
           def path = nettyUri.getPath
           def method = nettyHttpRequest.getMethod.getName
+          def version = nettyVersion.getText
           def queryString = parameters
           def headers = rHeaders
           lazy val remoteAddress = rRemoteAddress
@@ -127,7 +136,7 @@ private[server] class PlayDefaultUpstreamHandler(server: Server, allChannels: De
                 }
 
                 // Response header Connection: Keep-Alive is needed for HTTP 1.0
-                if (keepAlive && version == HttpVersion.HTTP_1_0) {
+                if (keepAlive && nettyVersion == HttpVersion.HTTP_1_0) {
                   nettyResponse.setHeader(CONNECTION, KEEP_ALIVE)
                 }
 
@@ -267,7 +276,7 @@ private[server] class PlayDefaultUpstreamHandler(server: Server, allChannels: De
             .map(Cookies.decode(_))
             .flatMap(_.find(_.name == Flash.COOKIE_NAME)).orElse {
               Option(requestHeader.flash).filterNot(_.isEmpty).map { _ =>
-                play.api.mvc.Cookie(Flash.COOKIE_NAME, "", 0)
+                Flash.discard.toCookie
               }
             }
           }
@@ -298,7 +307,7 @@ private[server] class PlayDefaultUpstreamHandler(server: Server, allChannels: De
               val enumerator = websocketHandshake(ctx, nettyHttpRequest, e)(ws.frameFormatter)
               f(requestHeader)(enumerator, socketOut(ctx)(ws.frameFormatter))
             } catch {
-              case e => e.printStackTrace
+              case NonFatal(e) => e.printStackTrace()
             }
 
           //handle bad websocket request
@@ -319,7 +328,7 @@ private[server] class PlayDefaultUpstreamHandler(server: Server, allChannels: De
 
           val filteredAction = app.map(_.global).getOrElse(DefaultGlobal).doFilter(a)
 
-          val eventuallyBodyParser = scala.concurrent.Future(filteredAction(requestHeader))
+          val eventuallyBodyParser = scala.concurrent.Future(filteredAction(requestHeader))(play.api.libs.concurrent.Execution.defaultContext)
 
           requestHeader.headers.get("Expect").filter(_ == "100-continue").foreach { _ =>
             eventuallyBodyParser.flatMap(_.unflatten).map {
@@ -352,7 +361,7 @@ private[server] class PlayDefaultUpstreamHandler(server: Server, allChannels: De
               Enumerator(body).andThen(Enumerator.enumInput(EOF))
             }
 
-            eventuallyBodyParser.flatMap(it => bodyEnumerator |>> it): Promise[Iteratee[Array[Byte], Result]]
+            eventuallyBodyParser.flatMap(it => bodyEnumerator |>> it): scala.concurrent.Future[Iteratee[Array[Byte], Result]]
 
           }
 

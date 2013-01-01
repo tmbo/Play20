@@ -6,8 +6,7 @@ import java.util.List;
 import java.util.Iterator;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-
-import static play.core.j.JavaPromise.defaultContext;
+import play.core.Invoker;
 
 /**
  * Defines a set of functional programming style helpers.
@@ -207,14 +206,7 @@ public class F {
          */
         public <B> Promise<Either<A,B>> or(Promise<B> another) {
             return (new Promise(new play.api.libs.concurrent.PlayPromise(this.promise).or(another.getWrappedPromise()))).map(
-                 new Function<scala.Either<A,B>,Either<A,B>>() {
-                    public Either<A,B> apply(scala.Either<A,B> scalaEither) {
-                        if (scalaEither.left().toOption().isDefined() == true) 
-                            return Either.Left(scalaEither.left().get());
-                        else 
-                            return Either.Right(scalaEither.right().get());
-                    }
-                 }
+              new  play.core.j.EitherToFEither<A,B>()
             );
         }
         /**
@@ -246,7 +238,7 @@ public class F {
                     }
                     return null;
                 }
-            });
+                },Invoker.executionContext());
         }
 
         /**
@@ -272,7 +264,7 @@ public class F {
                             throw new RuntimeException(t);
                         }
                     }
-                    },defaultContext())
+                    },Invoker.executionContext())
             );
         }
 
@@ -300,7 +292,7 @@ public class F {
                             throw new RuntimeException(e);
                         }
                     }
-                    })
+                    },Invoker.executionContext())
                     );
         }
 
@@ -327,11 +319,11 @@ public class F {
                             throw new RuntimeException(t);
                         }
                     }
-                    },defaultContext()).flatMap(new scala.runtime.AbstractFunction1<Promise<B>,scala.concurrent.Future<B>>() {
+                    },Invoker.executionContext()).flatMap(new scala.runtime.AbstractFunction1<Promise<B>,scala.concurrent.Future<B>>() {
                     public scala.concurrent.Future<B> apply(Promise<B> p) {
                         return p.promise;
                     }
-                        },defaultContext())
+                        },Invoker.executionContext())
             );
         }
 
@@ -355,7 +347,7 @@ public class F {
                     synchronized(Promise.class) {
                         actors = new ArrayList<akka.actor.ActorRef>(nb);
                         for(int i=0; i<nb; i++) {
-                            actors.add(play.api.libs.concurrent.Promise$.MODULE$.system().actorOf(new akka.actor.Props(PromiseActor.class), "promise-actor-" + i));
+                            actors.add(play.core.Invoker$.MODULE$.system().actorOf(new akka.actor.Props(PromiseActor.class), "promise-actor-" + i));
                         }
                     }
                 }
@@ -370,13 +362,11 @@ public class F {
             } else {
                 id = context.id();
             }
-            return new play.api.libs.concurrent.AkkaPromise(
-                    (akka.dispatch.Future<Object>)akka.pattern.Patterns.ask(
+            return play.core.j.JavaPromise.akkaAsk(
                             actors().get((int)(id % actors().size())), 
                             Tuple3(f, a, context), 
                             akka.util.Timeout.apply(60000 * 60 * 1) // Let's wait 1h here. Unfortunately we can't avoid a timeout.
-                            )
-                    ).map(new scala.runtime.AbstractFunction1<Object,B> () {
+                   ).map(new scala.runtime.AbstractFunction1<Object,B> () {
                         public B apply(Object o) {
                             Either<Throwable,B> r = (Either<Throwable,B>)o;
                             if(r.left.isDefined()) {
@@ -390,7 +380,7 @@ public class F {
                            
                             return r.right.get();
                 }
-            },defaultContext());
+            },Invoker.executionContext());
         }
 
         // Executes the Promise functions (capturing exception), with the given ThreadLocal context.

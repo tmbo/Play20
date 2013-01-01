@@ -1,5 +1,7 @@
 package play.core.j
 
+import scala.language.existentials
+
 import play.api.mvc._
 import play.mvc.{ Action => JAction, Result => JResult }
 import play.mvc.Http.{ Context => JContext, Request => JRequest, RequestBody => JBody, Cookies => JCookies, Cookie => JCookie }
@@ -56,7 +58,8 @@ trait JavaAction extends Action[play.mvc.Http.RequestBody] with JavaHelpers {
 
     val finalAction = actionMixins.foldLeft[JAction[_ <: Any]](baseAction) {
       case (delegate, (annotation, actionClass)) => {
-        val action = actionClass.newInstance
+        val global = play.api.Play.maybeApplication.map(_.global).getOrElse(play.api.DefaultGlobal)
+        val action = global.getControllerInstance(actionClass).asInstanceOf[play.mvc.Action[Object]]
         action.configuration = annotation
         action.delegate = delegate
         action

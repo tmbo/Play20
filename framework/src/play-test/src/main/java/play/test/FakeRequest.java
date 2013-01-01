@@ -51,7 +51,7 @@ public class FakeRequest {
         Map<String, Seq<String>> map = new HashMap<String, Seq<String>>(Scala.asJava(fake.headers().toMap()));
         map.put("Content-Type", Scala.toSeq(new String[] {"application/json"}));
         AnyContentAsJson content = new AnyContentAsJson(play.api.libs.json.Json.parse(node.toString()));
-        fake = new play.api.test.FakeRequest(Helpers.POST, fake.path(), new play.api.test.FakeHeaders(Scala.asScala(map)), content, "127.0.0.1");
+        fake = new play.api.test.FakeRequest(Helpers.POST, fake.path(), new play.api.test.FakeHeaders(Scala.asScala(map).toSeq()), content, fake.remoteAddress(), fake.version(), fake.id(), fake.tags());
         return this;
     }
 
@@ -70,7 +70,7 @@ public class FakeRequest {
         Map<String, Seq<String>> map = new HashMap<String, Seq<String>>(Scala.asJava(fake.headers().toMap()));
         map.put("Content-Type", Scala.toSeq(new String[] {"application/json"}));
         AnyContentAsJson content = new AnyContentAsJson(play.api.libs.json.Json.parse(node.toString()));
-        fake = new play.api.test.FakeRequest(method, fake.path(), new play.api.test.FakeHeaders(Scala.asScala(map)), content, "127.0.0.1");
+        fake = new play.api.test.FakeRequest(method, fake.path(), new play.api.test.FakeHeaders(Scala.asScala(map).toSeq()), content, fake.remoteAddress(), fake.version(), fake.id(), fake.tags());
         return this;
     }
 
@@ -99,7 +99,7 @@ public class FakeRequest {
     public FakeRequest withCookies(Http.Cookie... cookies) {
         List <play.api.mvc.Cookie> scalacookies = new ArrayList<play.api.mvc.Cookie>();
         for (Http.Cookie c : cookies) {
-            scalacookies.add(new play.api.mvc.Cookie(c.name(), c.value(), c.maxAge(), c.path(), Scala.Option(c.domain()), c.secure(), c.httpOnly()) );
+            scalacookies.add(new play.api.mvc.Cookie(c.name(), c.value(), Scala.<Object>Option(c.maxAge()), c.path(), Scala.Option(c.domain()), c.secure(), c.httpOnly()) );
         }
         fake = fake.withCookies(Scala.varargs(scalacookies.toArray()));
         return this;

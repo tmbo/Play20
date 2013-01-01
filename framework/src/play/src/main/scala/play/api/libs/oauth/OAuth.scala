@@ -14,7 +14,7 @@ import play.api.libs.ws.WS.WSRequest
  * Library to access resources protected by OAuth 1.0a.
  *  @param info the service information, including the required URLs and the application id and secret
  *  @param use10a whether the service should use the 1.0 version of the spec, or the 1.0a version fixing a security issue.
- *  You must use the version corresponding to the 
+ *  You must use the version corresponding to the
  */
 case class OAuth(info: ServiceInfo, use10a: Boolean = true) {
 
@@ -124,7 +124,7 @@ case class OAuthCalculator(consumerKey: ConsumerKey, token: RequestToken) extend
 
     override def getContentType(): String = getHeader("Content-Type")
 
-    override def getMessagePayload() = null
+    override def getMessagePayload() = new java.io.ByteArrayInputStream(request.getStringData.getBytes)
 
     override def getMethod(): String = this.request.method
 

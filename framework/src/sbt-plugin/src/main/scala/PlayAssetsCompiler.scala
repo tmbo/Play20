@@ -3,6 +3,7 @@ package sbt
 import Keys._
 import PlayKeys._
 import PlayExceptions._
+import play.api.PlayException
 
 // ----- Assets
 trait PlayAssetsCompiler {
@@ -17,11 +18,9 @@ trait PlayAssetsCompiler {
     naming: (String, Boolean) => String,
     compile: (File, Seq[String]) => (String, Option[String], Seq[File]),
     optionsSettings: sbt.SettingKey[Seq[String]]) =
-    (sourceDirectory in Compile, resourceManaged in Compile, cacheDirectory, optionsSettings, filesSetting, incrementalAssetsCompilation, requireSubFolder) map { (src, resources, cache, options, files, incrementalAssetsCompilation, requireSubFolder) =>
-      
-      val require = (src / "assets" / name / requireSubFolder)
-   
-      val requireSupport = if (require.exists) {
+    (state, sourceDirectory in Compile, resourceManaged in Compile, cacheDirectory, optionsSettings, filesSetting, requireJs) map { (state, src, resources, cache, options, files, requireJs) =>
+
+      val requireSupport = if (!requireJs.isEmpty) {
         Seq("rjs")
       } else Seq[String]()
 
@@ -36,18 +35,29 @@ trait PlayAssetsCompiler {
       if (previousInfo != currentInfos) {
  
         //a changed file can be either a new file, a deleted file or a modified one
-        lazy val changedFiles: Seq[File] = currentInfos.filter(e=> !previousInfo.get(e._1).isDefined || previousInfo(e._1).lastModified < e._2.lastModified).map(_._1).toSeq ++ previousInfo.filter(e=> !currentInfos.get(e._1).isDefined).map(_._1).toSeq
-       
-        val dependencies = previousRelation.filter((original, compiled) => !incrementalAssetsCompilation || changedFiles.contains(original))._2s
+        lazy val changedFiles: Seq[File] = currentInfos.filter(e => !previousInfo.get(e._1).isDefined || previousInfo(e._1).lastModified < e._2.lastModified).map(_._1).toSeq ++ previousInfo.filter(e => !currentInfos.get(e._1).isDefined).map(_._1).toSeq
+
+        //erease dependencies that belong to changed files
+        val dependencies = previousRelation.filter((original, compiled) => changedFiles.contains(original))._2s
         dependencies.foreach(IO.delete)
-        
+
+        /**
+         * If the given file was changed or
+         * if the given file was a dependency,
+         * otherwise calculate dependencies based on previous relation graph
+         */
         val t = System.currentTimeMillis()
-        val generated: Seq[(File, java.io.File)] = 
-        (files x relativeTo(Seq(src / "assets"))).flatMap {
+        val generated: Seq[(File, java.io.File)] = (files x relativeTo(Seq(src / "assets"))).flatMap {
           case (sourceFile, name) => {
-              if (!incrementalAssetsCompilation || changedFiles.contains(sourceFile) || dependencies.contains(new File(resources, "public/" + naming(name, false)))) {
-                val (debug, min, dependencies) = compile(sourceFile, options ++ requireSupport)
-                val out = new File(resources, "public/" + naming(name, false))
+            if (changedFiles.contains(sourceFile) || dependencies.contains(new File(resources, "public/" + naming(name, false)))) {
+              val (debug, min, dependencies) = try {
+                compile(sourceFile, options ++ requireSupport)
+              } catch {
+                case e: AssetCompilationException => throw reportCompilationError(state, e)
+              }
+              val out = new File(resources, "public/" + naming(name, false))
+              IO.write(out, debug)
+              (dependencies ++ Seq(sourceFile)).toSet[File].map(_ -> out) ++ min.map { minified =>
                 val outMin = new File(resources, "public/" + naming(name, true))
                 IO.write(out, debug)
                 dependencies.map(_ -> out) ++ min.map { minified =>
@@ -113,5 +123,24 @@ trait PlayAssetsCompiler {
     },
     coffeescriptOptions
   )
+
+  def reportCompilationError(state: State, error: PlayException.ExceptionSource) = {
+    val log = state.log
+    // log the source file and line number with the error message
+    log.error(Option(error.sourceName).getOrElse("") + Option(error.line).map(":" + _).getOrElse("") + ": " + error.getMessage)
+    Option(error.interestingLines(0)).map(_.focus).flatMap(_.headOption) map { line =>
+      // log the line
+      log.error(line)
+      Option(error.position).map { pos =>
+      // print a carat under the offending character
+        val spaces = (line: Seq[Char]).take(pos).map {
+          case '\t' => '\t'
+          case x => ' '
+        }
+        log.error(spaces.mkString + "^")
+      }
+    }
+    error
+  }
 
 }

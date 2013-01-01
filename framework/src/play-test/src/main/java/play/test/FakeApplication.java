@@ -20,13 +20,18 @@ public class FakeApplication {
      * @param additionalConfiguration Additional configuration
      * @param additionalPlugins Additional plugins
      */
-    public FakeApplication(File path, ClassLoader classloader, Map<String,String> additionalConfiguration, List<String> additionalPlugins) {
+    @SuppressWarnings("unchecked")
+    public FakeApplication(File path, ClassLoader classloader, Map<String, ? extends Object> additionalConfiguration, List<String> additionalPlugins, play.GlobalSettings global) {
+        play.api.GlobalSettings g = null;
+        if(global != null)
+          g = new play.core.j.JavaGlobalSettingsAdapter(global);
         wrappedApplication = new play.api.test.FakeApplication(
                 path,
                 classloader,
                 Scala.toSeq(additionalPlugins),
                 Scala.<String>emptySeq(),
-                Scala.asScala(additionalConfiguration)
+                Scala.asScala((Map<String, Object>)additionalConfiguration),
+                scala.Option.apply(g)
                 );
     }
 

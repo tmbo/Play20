@@ -18,6 +18,7 @@ import play.data.validation.Constraints.RequiredValidator;
 import play.i18n.Lang;
 import play.libs.F;
 import play.libs.F.*;
+import play.libs.WS;
 
 import play.api.mvc.AsyncResult;
 
@@ -198,7 +199,7 @@ public class SimpleTest {
                 play.api.mvc.Result wrappedResult = result.getWrappedResult();
                 if (wrappedResult instanceof AsyncResult)
                     try {
-                    this.wrappedResult = scala.concurrent.Await.result(((AsyncResult) wrappedResult).result(),scala.concurrent.util.Duration.Inf());
+                    this.wrappedResult = scala.concurrent.Await.result(((AsyncResult) wrappedResult).result(),scala.concurrent.duration.Duration.Inf());
                     } catch (Exception e){}
                 else
                     this.wrappedResult = wrappedResult;
@@ -319,6 +320,16 @@ public class SimpleTest {
                         .toString()).as(
                 "field(\"orders[0].items[0].deliveryDate\").format()._2")
                 .isEqualTo("[yyyy-MM-dd]");
+    }
+
+    @Test
+    public void actionShouldBeExecutedInCorrectThread() {
+        running(testServer(3333), new Runnable() {
+            public void run() {
+                WS.Response response = WS.url("http://localhost:3333/thread").get().get();
+                assertThat(response.getBody()).startsWith("play-akka.actor.default-dispatcher-");
+            }
+        });
     }
 
 }

@@ -18,7 +18,7 @@ import play.core.server.netty._
 
 import java.security.cert.X509Certificate
 import java.io.{File, FileInputStream}
-import utils.IO
+import scala.util.control.NonFatal
 
 /**
  * provides a stopable Server
@@ -53,66 +53,66 @@ class NettyServer(appProvider: ApplicationProvider, port: Int, sslPort: Option[I
       }
       newPipeline.addLast("decoder", new HttpRequestDecoder(4096, 8192, 8192))
       newPipeline.addLast("encoder", new HttpResponseEncoder())
-      newPipeline.addLast("compressor", new HttpContentCompressor())
-      newPipeline.addLast("decompressor", new HttpContentDecompressor())	  
+      newPipeline.addLast("decompressor", new HttpContentDecompressor())
       newPipeline.addLast("handler", defaultUpStreamHandler)
       newPipeline
     }
 
     lazy val sslContext: Option[SSLContext] =  //the sslContext should be reused on each connection
-      for (tlsPort <- sslPort;
-           app <- appProvider.get.right.toOption )
-      yield {
-        val config = app.configuration
-        val ksAttr = "https.port" + tlsPort + ".keystore"
-        val keyStore = KeyStore.getInstance(config.getString(ksAttr + ".type").getOrElse("JKS"))
-        val kmfOpt: Option[Option[KeyManagerFactory]] = for (
-          path <- config.getString(ksAttr + ".location");
-          alias <- config.getString(ksAttr + ".alias");
-          password <- config.getString(ksAttr + ".password").orElse(Some("")).map(_.toCharArray);
-          algorithm <- config.getString(ksAttr + ".algorithm").orElse(Option(KeyManagerFactory.getDefaultAlgorithm))
-        ) yield {
-          //Logger("play").info("path="+path+" alias="+alias+" password="+password+" alg="+algorithm)
-          val file = new File(path)
-          if (file.isFile) {
-            IO.use(new FileInputStream(file)) {
-              in =>
-                keyStore.load(in, password)
-            }
-            Logger("play").info("for port " + tlsPort + " using keystore at " + file)
-            val kmf = KeyManagerFactory.getInstance(algorithm)
-            kmf.init(keyStore, password) //there should be a certificate keystore
-            Some(kmf)
-          } else None
-        }
-        val kmf = kmfOpt.flatMap(a => a).orElse {
-          Logger("play").warn("using localhost fake keystore for ssl connection on port " + sslPort.get)
-          keyStore.load(FakeKeyStore.asInputStream, FakeKeyStore.getKeyStorePassword)
-          val kmf = KeyManagerFactory.getInstance("SunX509")
-          kmf.init(keyStore, FakeKeyStore.getCertificatePassword)
-          Some(kmf)
-        }.get
-
-        val sslContext = SSLContext.getInstance("TLS")
-        val tm = config.getString(ksAttr + ".trust").map {
-          case "noCA" => {
-            Logger("play").warn("secure http server (https) on port " + sslPort.get + " with no client " +
-              "side CA verification. Requires http://webid.info/ for client certifiate verification.")
-            Array[TrustManager](noCATrustManager)
+      Option(System.getProperty("https.keyStore")) map { path =>
+        // Load the configured key store
+        val keyStore = KeyStore.getInstance(System.getProperty("https.keyStoreType", "JKS"))
+        val password = System.getProperty("https.keyStorePassword", "").toCharArray
+        val algorithm = System.getProperty("https.keyStoreAlgorithm", KeyManagerFactory.getDefaultAlgorithm)
+        val file = new File(path)
+        if (file.isFile) {
+          for (in <- resource.managed(new FileInputStream(file))) {
+              keyStore.load(in, password)
           }
-          case path => {
-            Logger("play").info("no trust info for port " + tlsPort)
-            null
-          } //for the moment
-        }.getOrElse {
-          Logger("play").info("no trust attribute for port " + tlsPort)
-          null
+          Logger("play").debug("Using HTTPS keystore at " + file.getAbsolutePath)
+          try {
+            val kmf = KeyManagerFactory.getInstance(algorithm)
+            kmf.init(keyStore, password)
+            Some(kmf)
+          } catch {
+            case NonFatal(e) => {
+              Logger("play").error("Error loading HTTPS keystore from " + file.getAbsolutePath, e)
+              None
+            }
+          }
+        } else {
+          Logger("play").error("Unable to find HTTPS keystore at \"" + file.getAbsolutePath + "\"")
+          None
         }
-        sslContext.init(kmf.getKeyManagers, tm, new SecureRandom())
-        sslContext
-      }
+      } orElse {
 
-  }
+        // Load a generated key store
+        Logger("play").warn("Using generated key with self signed certificate for HTTPS. This should not be used in production.")
+        Some(FakeKeyStore.keyManagerFactory(applicationProvider.path))
+
+      } flatMap { a => a } map { kmf =>
+          // Load the configured trust manager
+          val tm = Option(System.getProperty("https.trustStore")).map {
+            case "noCA" => {
+              Logger("play").warn("HTTPS configured with no client " +
+                "side CA verification. Requires http://webid.info/ for client certifiate verification.")
+              Array[TrustManager](noCATrustManager)
+            }
+            case _ => {
+              Logger("play").debug("Using default trust store for client side CA verification")
+              null
+            }
+          }.getOrElse {
+            Logger("play").debug("Using default trust store for client side CA verification")
+            null
+          }
+
+          // Configure the SSL context
+          val sslContext = SSLContext.getInstance("TLS")
+          sslContext.init(kmf.getKeyManagers, tm, null)
+          sslContext
+        }
+      }
 
   // Keep a reference on all opened channels (useful to close everything properly, especially in DEV mode)
   val allChannels = new DefaultChannelGroup
@@ -153,13 +153,13 @@ class NettyServer(appProvider: ApplicationProvider, port: Int, sslPort: Option[I
     try {
       Play.stop()
     } catch {
-      case e => Logger("play").error("Error while stopping the application", e)
+      case NonFatal(e) => Logger("play").error("Error while stopping the application", e)
     }
 
     try {
       super.stop()
     } catch {
-      case e => Logger("play").error("Error while stopping akka", e)
+      case NonFatal(e) => Logger("play").error("Error while stopping akka", e)
     }
 
     mode match {
@@ -210,7 +210,7 @@ object NettyServer {
 
       if (pidFile.getAbsolutePath != "/dev/null") {
         if (pidFile.exists) {
-          println("This application is already running (Or delete "+ pidFile.getAbsolutePath +" file).")
+          println("This application is already running (Or delete " + pidFile.getAbsolutePath + " file).")
           System.exit(-1)
         }
 
@@ -230,16 +230,15 @@ object NettyServer {
         Option(System.getProperty("https.port")).map(Integer.parseInt(_)),
         Option(System.getProperty("http.address")).getOrElse("0.0.0.0")
       )
-        
       Runtime.getRuntime.addShutdownHook(new Thread {
         override def run {
           server.stop()
         }
       })
-      
+
       Some(server)
     } catch {
-      case e => {
+      case NonFatal(e) => {
         println("Oops, cannot start the server.")
         e.printStackTrace()
         None
@@ -290,12 +289,7 @@ object NettyServer {
           Option(System.getProperty("https.port")).map(Integer.parseInt(_)),
           mode = Mode.Dev)
       } catch {
-        case e => {
-          throw e match {
-            case e: ExceptionInInitializerError => e.getCause
-            case e => e
-          }
-        }
+        case e: ExceptionInInitializerError => throw e.getCause
       }
 
     }

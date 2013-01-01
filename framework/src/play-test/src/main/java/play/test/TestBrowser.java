@@ -18,9 +18,10 @@ public class TestBrowser extends FluentAdapter {
      * A test browser (Using Selenium WebDriver) with the FluentLenium API (https://github.com/Fluentlenium/FluentLenium).
      *
      * @param webDriver The WebDriver instance to use.
+     * @param baseUrl The base url to use for relative requests.
      */
-    public TestBrowser(Class<? extends WebDriver> webDriver) throws Exception {
-        this(play.api.test.WebDriverFactory.apply(webDriver));
+    public TestBrowser(Class<? extends WebDriver> webDriver, String baseUrl) throws Exception {
+        this(play.api.test.WebDriverFactory.apply(webDriver), baseUrl);
     }
 
 
@@ -28,9 +29,11 @@ public class TestBrowser extends FluentAdapter {
      * A test browser (Using Selenium WebDriver) with the FluentLenium API (https://github.com/Fluentlenium/FluentLenium).
      *
      * @param webDriver The WebDriver instance to use.
+     * @param baseUrl The base url to use for relative requests.
      */
-    public TestBrowser(WebDriver webDriver) {
+    public TestBrowser(WebDriver webDriver, String baseUrl) {
         super(webDriver);
+        withDefaultUrl(baseUrl);
     }
 
     /**
@@ -66,7 +69,6 @@ public class TestBrowser extends FluentAdapter {
      * useful in situations where FluentAdapter#await is too specific
      * (for example to check against page source or title)
      *
-     * @param wait generic FluentWait<WebDriver> instance
      * @param f function to execute
      */
     public <T>T waitUntil(Function<WebDriver, T> f) {
@@ -81,5 +83,4 @@ public class TestBrowser extends FluentAdapter {
     public WebDriver.Options manage() {
         return super.getDriver().manage();
     }
-
 }

@@ -26,10 +26,10 @@ object LessCompiler {
 
   import scalax.file._
 
-  def compile(source: File, coptions: Seq[String]) = {
-    val logger = new ExecLogger();
-    val minified = coptions.contains("minify");
-    val options = if(minified) "-x" else "";
+  def compile(source: File) = {
+    val logger = new ExecLogger()
+    val minified = false
+    val options = if(minified) "-x" else ""
     try {
       val process = Process("lessc "+options+" -",Some(source.getParentFile)) #< source
       val normal = process !! logger

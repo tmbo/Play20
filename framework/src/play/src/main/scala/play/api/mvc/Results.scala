@@ -7,7 +7,12 @@ import play.api.http._
 import play.api.libs.json._
 import play.api.http.Status._
 import play.api.http.HeaderNames._
-import play.api.libs.concurrent.execution.defaultContext
+import play.api.{Application, Play}
+import play.api.i18n.Lang
+
+import scala.concurrent.{ Future, ExecutionContext }
+
+import play.core.Execution.internalContext
 
 /**
  * A simple HTTP response header, used for standard responses.
@@ -55,6 +60,7 @@ sealed trait WithHeaders[+A <: Result] {
    */
   def withCookies(cookies: Cookie*): A
 
+
   /**
    * Discards cookies along this result.
    *
@@ -63,10 +69,24 @@ sealed trait WithHeaders[+A <: Result] {
    * Ok("Hello world").discardingCookies("theme")
    * }}}
    *
+   * @param names the names of the cookies to discard along to this result
+   * @return the new result
+   */
+  @deprecated("This method can only discard cookies on the / path with no domain and without secure set.  Use discardingCookies(DiscardingCookie*) instead.", "2.1")
+  def discardingCookies(name: String, names: String*): A = discardingCookies((name :: names.toList).map(n => DiscardingCookie(n)):_*)
+
+  /**
+   * Discards cookies along this result.
+   *
+   * For example:
+   * {{{
+   * Ok("Hello world").discardingCookies(DiscardingCookie("theme"))
+   * }}}
+   *
    * @param cookies the cookies to discard along to this result
    * @return the new result
    */
-  def discardingCookies(names: String*): A
+  def discardingCookies(cookies: DiscardingCookie*): A
 
   /**
    * Sets a new session for this result.
@@ -105,6 +125,20 @@ sealed trait WithHeaders[+A <: Result] {
    * @return the new result
    */
   def withNewSession: A
+
+  /**
+   * Sets the users language permanently for future requests by storing it in a cookie.
+   *
+   * For example:
+   * {{{
+   * implicit val lang = Lang("fr-FR")
+   * Ok(Messages("hello.world")).withLang(lang)
+   * }}}
+   *
+   * @param lang the language to store for the user
+   * @return the new result
+   */
+  def withLang(lang: Lang)(implicit app: Application): A = withCookies(Cookie(Play.langCookieName, lang.code))
 
   /**
    * Adds values to the flash scope for this result.
@@ -159,7 +193,7 @@ object PlainResult {
    * }}}
    */
   def unapply(result: Result): Option[(Int, Map[String, String])] = result match {
-    case r: PlainResult => Some(r.header.status, r.header.headers)
+    case r: PlainResult => Some((r.header.status, r.header.headers))
     case _ => None
   }
 
@@ -201,8 +235,8 @@ trait PlainResult extends Result with WithHeaders[PlainResult] {
    * @param cookies the cookies to discard along to this result
    * @return the new result
    */
-  def discardingCookies(names: String*): PlainResult = {
-    withHeaders(SET_COOKIE -> Cookies.merge(header.headers.get(SET_COOKIE).getOrElse(""), Nil, discard = names))
+  def discardingCookies(cookies: DiscardingCookie*): PlainResult = {
+    withHeaders(SET_COOKIE -> Cookies.merge(header.headers.get(SET_COOKIE).getOrElse(""), cookies.map(_.toCookie)))
   }
 
   /**
@@ -217,7 +251,7 @@ trait PlainResult extends Result with WithHeaders[PlainResult] {
    * @return the new result
    */
   def withSession(session: Session): PlainResult = {
-    if (session.isEmpty) discardingCookies(Session.COOKIE_NAME) else withCookies(Session.encodeAsCookie(session))
+    if (session.isEmpty) discardingCookies(Session.discard) else withCookies(Session.encodeAsCookie(session))
   }
 
   /**
@@ -285,7 +319,6 @@ trait PlainResult extends Result with WithHeaders[PlainResult] {
    * @return the new result
    */
   def as(contentType: String): PlainResult = withHeaders(CONTENT_TYPE -> contentType)
-
 }
 
 /**
@@ -355,7 +388,7 @@ case class ChunkedResult[A](header: ResponseHeader, chunks: Iteratee[A, Unit] =>
  *
  * @param result the promise of result, which can be any other result type
  */
-case class AsyncResult(result: Promise[Result]) extends Result with WithHeaders[AsyncResult] {
+case class AsyncResult(result: Future[Result]) extends Result with WithHeaders[AsyncResult] {
 
   /**
    * Apply some transformation to this `AsyncResult`
@@ -363,19 +396,19 @@ case class AsyncResult(result: Promise[Result]) extends Result with WithHeaders[
    * @param f The transformation function
    * @return The transformed `AsyncResult`
    */
-  def transform(f: PlainResult => Result): AsyncResult = AsyncResult (result.map {
+  def transform(f: PlainResult => Result)(implicit ec: ExecutionContext): AsyncResult = AsyncResult (result.map {
       case AsyncResult(r) => AsyncResult(r.map{
         case r:PlainResult => f(r)
         case r:AsyncResult => r.transform(f)})
       case r:PlainResult => f(r)
   })
 
-  def unflatten:Promise[PlainResult] = result.flatMap {
+  def unflatten:Future[PlainResult] = result.flatMap {
       case r:PlainResult => Promise.pure(r)
       case r@AsyncResult(_) => r.unflatten
-  }
+  }(internalContext)
 
-  def map(f: Result => Result): AsyncResult = AsyncResult(result.map(f))
+  def map(f: Result => Result)(implicit ec: ExecutionContext): AsyncResult = AsyncResult(result.map(f))
 
   /**
    * Adds headers to this result.
@@ -389,7 +422,7 @@ case class AsyncResult(result: Promise[Result]) extends Result with WithHeaders[
    * @return the new result
    */
   def withHeaders(headers: (String, String)*): AsyncResult = {
-    map(_.withHeaders(headers: _*))
+    map(_.withHeaders(headers: _*))(internalContext)
   }
 
   /**
@@ -404,7 +437,7 @@ case class AsyncResult(result: Promise[Result]) extends Result with WithHeaders[
    * @return the new result
    */
   def withCookies(cookies: Cookie*): AsyncResult = {
-    map(_.withCookies(cookies: _*))
+    map(_.withCookies(cookies: _*))(internalContext)
   }
 
   /**
@@ -418,8 +451,8 @@ case class AsyncResult(result: Promise[Result]) extends Result with WithHeaders[
    * @param cookies the cookies to discard along to this result
    * @return the new result
    */
-  def discardingCookies(names: String*): AsyncResult = {
-    map(_.discardingCookies(names: _*))
+  def discardingCookies(cookies: DiscardingCookie*): AsyncResult = {
+    map(_.discardingCookies(cookies: _*))(internalContext)
   }
 
   /**
@@ -434,7 +467,7 @@ case class AsyncResult(result: Promise[Result]) extends Result with WithHeaders[
    * @return the new result
    */
   def withSession(session: Session): AsyncResult = {
-    map(_.withSession(session))
+    map(_.withSession(session))(internalContext)
   }
 
   /**
@@ -449,7 +482,7 @@ case class AsyncResult(result: Promise[Result]) extends Result with WithHeaders[
    * @return the new result
    */
   def withSession(session: (String, String)*): AsyncResult = {
-    map(_.withSession(session: _*))
+    map(_.withSession(session: _*))(internalContext)
   }
 
   /**
@@ -463,7 +496,7 @@ case class AsyncResult(result: Promise[Result]) extends Result with WithHeaders[
    * @return the new result
    */
   def withNewSession: AsyncResult = {
-    map(_.withNewSession)
+    map(_.withNewSession)(internalContext)
   }
 
   /**
@@ -478,7 +511,7 @@ case class AsyncResult(result: Promise[Result]) extends Result with WithHeaders[
    * @return the new result
    */
   def flashing(flash: Flash): AsyncResult = {
-    map(_.flashing(flash))
+    map(_.flashing(flash))(internalContext)
   }
 
   /**
@@ -493,7 +526,7 @@ case class AsyncResult(result: Promise[Result]) extends Result with WithHeaders[
    * @return the new result
    */
   def flashing(values: (String, String)*): AsyncResult = {
-    map(_.flashing(values: _*))
+    map(_.flashing(values: _*))(internalContext)
   }
 
   /**
@@ -508,7 +541,7 @@ case class AsyncResult(result: Promise[Result]) extends Result with WithHeaders[
    * @return the new result
    */
   def as(contentType: String): AsyncResult = {
-    map(_.as(contentType))
+    map(_.as(contentType))(internalContext)
   }
 
 }
@@ -576,9 +609,9 @@ trait Results {
      * @param content content to send
      * @param a `SimpleResult`
      */
-    def apply[C](content: C)(implicit writeable: Writeable[C], contentTypeOf: ContentTypeOf[C]): SimpleResult[C] = {
+    def apply[C](content: C)(implicit writeable: Writeable[C]): SimpleResult[C] = {
       SimpleResult(
-        header = ResponseHeader(status, contentTypeOf.mimeType.map(ct => Map(CONTENT_TYPE -> ct)).getOrElse(Map.empty)),
+        header = ResponseHeader(status, writeable.contentType.map(ct => Map(CONTENT_TYPE -> ct)).getOrElse(Map.empty)),
         Enumerator(content))
     }
 
@@ -606,9 +639,9 @@ trait Results {
      * @param content Enumerator providing the chunked content.
      * @param a `ChunkedResult`
      */
-    def stream[C](content: Enumerator[C])(implicit writeable: Writeable[C], contentTypeOf: ContentTypeOf[C]): ChunkedResult[C] = {
+    def stream[C](content: Enumerator[C])(implicit writeable: Writeable[C]): ChunkedResult[C] = {
       ChunkedResult(
-        header = ResponseHeader(status, contentTypeOf.mimeType.map(ct => Map(CONTENT_TYPE -> ct)).getOrElse(Map.empty)),
+        header = ResponseHeader(status, writeable.contentType.map(ct => Map(CONTENT_TYPE -> ct)).getOrElse(Map.empty)),
         iteratee => content |>> iteratee)
     }
 
@@ -625,15 +658,15 @@ trait Results {
      * @param content A function that will give you the Iteratee to write in once ready.
      * @param a `ChunkedResult`
      */
-    def stream[C](content: Iteratee[C, Unit] => Unit)(implicit writeable: Writeable[C], contentTypeOf: ContentTypeOf[C]): ChunkedResult[C] = {
+    def stream[C](content: Iteratee[C, Unit] => Unit)(implicit writeable: Writeable[C]): ChunkedResult[C] = {
       ChunkedResult(
-        header = ResponseHeader(status, contentTypeOf.mimeType.map(ct => Map(CONTENT_TYPE -> ct)).getOrElse(Map.empty)),
+        header = ResponseHeader(status, writeable.contentType.map(ct => Map(CONTENT_TYPE -> ct)).getOrElse(Map.empty)),
         content)
     }
 
   }
 
-  def Async(promise: Promise[Result]) = AsyncResult(promise)
+  def Async(promise: Future[Result]) = AsyncResult(promise)
 
   /** Generates a ‘200 OK’ result. */
   val Ok = new Status(OK)
@@ -655,6 +688,9 @@ trait Results {
 
   /** Generates a ‘206 PARTIAL_CONTENT’ result. */
   val PartialContent = new Status(PARTIAL_CONTENT)
+
+  /** Generates a ‘207 MULTI_STATUS’ result. */
+  val MultiStatus = new Status(MULTI_STATUS)
 
   /**
    * Generates a ‘301 MOVED_PERMANENTLY’ simple result.
@@ -729,6 +765,15 @@ trait Results {
   /** Generates a ‘417 EXPECTATION_FAILED’ result. */
   val ExpectationFailed = new Status(EXPECTATION_FAILED)
 
+  /** Generates a ‘422 UNPROCESSABLE_ENTITY’ result. */
+  val UnprocessableEntity = new Status(UNPROCESSABLE_ENTITY)
+
+  /** Generates a ‘423 LOCKED’ result. */
+  val Locked = new Status(LOCKED)
+
+  /** Generates a ‘424 FAILED_DEPENDENCY’ result. */
+  val FailedDependency = new Status(FAILED_DEPENDENCY)
+
   /** Generates a ‘429 TOO_MANY_REQUEST’ result. */
   val TooManyRequest = new Status(TOO_MANY_REQUEST)
 
@@ -743,6 +788,15 @@ trait Results {
 
   /** Generates a ‘503 SERVICE_UNAVAILABLE’ result. */
   val ServiceUnavailable = new Status(SERVICE_UNAVAILABLE)
+
+  /** Generates a ‘504 GATEWAY_TIMEOUT’ result. */
+  val GatewayTimeout = new Status(GATEWAY_TIMEOUT)
+
+  /** Generates a ‘505 HTTP_VERSION_NOT_SUPPORTED’ result. */
+  val HttpVersionNotSupported = new Status(HTTP_VERSION_NOT_SUPPORTED)
+
+  /** Generates a ‘507 INSUFFICIENT_STORAGE’ result. */
+  val InsufficientStorage = new Status(INSUFFICIENT_STORAGE)
 
   /**
    * Generates a simple result.
