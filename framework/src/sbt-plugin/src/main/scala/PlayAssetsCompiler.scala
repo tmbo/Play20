@@ -59,14 +59,12 @@ trait PlayAssetsCompiler {
               IO.write(out, debug)
               (dependencies ++ Seq(sourceFile)).toSet[File].map(_ -> out) ++ min.map { minified =>
                 val outMin = new File(resources, "public/" + naming(name, true))
-                IO.write(out, debug)
-                dependencies.map(_ -> out) ++ min.map { minified =>
-                  IO.write(outMin, minified)
-                  dependencies.map(_ -> outMin)
-                }.getOrElse(Nil)
-              } else {
-                previousRelation.filter((original,compiled)=> original == sourceFile)._2s.map(sourceFile ->_)
-              }
+                IO.write(outMin, minified)
+                dependencies.map(_ -> outMin)
+              }.getOrElse(Nil)
+            } else {
+              previousRelation.filter((original, compiled) => original == sourceFile)._2s.map(sourceFile -> _)
+            }
           }
         }
         //write object graph to cache file 

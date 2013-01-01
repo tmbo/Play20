@@ -36,10 +36,11 @@ object CoffeescriptCompiler {
       "coffee -scb" #< pipeSource !! logger
     } catch {
       case e: CoffeescriptPreprocessorException => {
-        throw CompilationException(
+        throw AssetCompilationException(
+            Some(source),
             "Coffeescript Preprocessor Error: " + e.error,
-            source,
-            Some(e.line))
+            Some(e.line),
+            None)
       }
       case e: java.lang.RuntimeException => {
         val error = logger.error match {
@@ -51,25 +52,18 @@ object CoffeescriptCompiler {
         throw error match {
           case msg @ line(sl) => 
             val l = Integer.parseInt(sl)
-            CompilationException(
+            AssetCompilationException(
+              Some(source),
+              msg,
+              lineMapping.get( l-1 ) orElse ( Some( l )),
+              None)
+          case msg => AssetCompilationException(
+            Some(source),
             msg,
-            source,
-            lineMapping.get( l-1 ) orElse ( Some( l )))
-          case msg => CompilationException(
-            msg,
-            source,
+            None,
             None)
         }
       }
     }
   }
-}
-
-case class CompilationException(message: String, coffeeFile: File, atLine: Option[Int]) extends PlayException(
-  "Compilation error", message) with PlayException.ExceptionSource {
-  def line = atLine
-  def position = None
-  def input = Some(scalax.file.Path(coffeeFile))
-  def sourceName = Some(coffeeFile.getAbsolutePath)
-  override def sourceType = Some( "coffee" )
 }
