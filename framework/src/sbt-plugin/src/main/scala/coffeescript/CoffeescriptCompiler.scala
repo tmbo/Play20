@@ -3,7 +3,7 @@ package play.core.coffeescript
 import java.io._
 import play.api._
 import scala.sys.process._
-import sbt.PlayExceptions._
+import sbt.PlayExceptions.AssetCompilationException
 
 case class ExecLogger(var messages: List[String] = Nil,
   var error: List[String] = Nil)
@@ -66,4 +66,5 @@ object CoffeescriptCompiler {
       }
     }
   }
+
 }

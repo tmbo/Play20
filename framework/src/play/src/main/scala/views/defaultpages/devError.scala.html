@@ -173,17 +173,17 @@
 			    </div>
 
 			}
-
+			
 			case exception: play.api.PlayException if exception.cause != null => {
-
+			    
 			    <h2>
 			        No source available, here is the exception stack trace:
 			    </h2>
 
 			    <div>
-
+			        
 			        <pre class="error"><span class="line">-></span><span class="code">@exception.cause.getClass.getName: @exception.cause.getMessage</span></pre>
-
+			        
 			        @exception.cause.getStackTrace.map { line =>
 						<pre><span class="line">&nbsp;</span><span class="code">    @line</span></pre>
 			        }

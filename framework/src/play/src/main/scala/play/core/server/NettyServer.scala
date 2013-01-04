@@ -37,8 +37,8 @@ class NettyServer(appProvider: ApplicationProvider, port: Int, sslPort: Option[I
 
   private def newBootstrap = new ServerBootstrap(
     new org.jboss.netty.channel.socket.nio.NioServerSocketChannelFactory(
-      Executors.newCachedThreadPool(),
-      Executors.newCachedThreadPool()))
+      Executors.newCachedThreadPool(NamedThreadFactory("netty-boss")),
+      Executors.newCachedThreadPool(NamedThreadFactory("netty-worker"))))
 
   class PlayPipelineFactory(secure: Boolean = false) extends ChannelPipelineFactory {
 
@@ -230,6 +230,7 @@ object NettyServer {
         Option(System.getProperty("https.port")).map(Integer.parseInt(_)),
         Option(System.getProperty("http.address")).getOrElse("0.0.0.0")
       )
+
       Runtime.getRuntime.addShutdownHook(new Thread {
         override def run {
           server.stop()
