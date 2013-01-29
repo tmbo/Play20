@@ -489,7 +489,9 @@ exec java $* -cp $classpath """ + customFileName.map(fn => "-Dconfig.file=`dirna
     val javaProperties = properties.map(_.drop(2).split('=')).map(a => a(0) -> a(1)).toSeq
     //port can be defined as a numeric argument, -Dhttp.port argument or a generic sys property 
     val port = others.headOption.orElse(javaProperties.toMap.get("http.port")).orElse(httpPort).map(parsePort).getOrElse(defaultPort)
-
+    //make port always available to apllication
+    System.setProperty("http.port", port)
+    
     (javaProperties, port)
   }
 
