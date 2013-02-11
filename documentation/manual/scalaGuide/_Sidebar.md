@@ -14,11 +14,11 @@
 - [[Internationalization | ScalaI18N]]
 - [[The application Global object | ScalaGlobal]]
 - [[Testing your application | ScalaTest]]
-- [[Securing your application | ScalaSecurity]]
     
 ### Advanced topics
 
 - [[Handling data streams reactively | Iteratees]]
+- [[Play 2 HTTP API | HttpApi]]
 
 ### Tutorials
 
