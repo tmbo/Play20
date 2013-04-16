@@ -3,7 +3,7 @@ package sbt
 import play.api._
 import play.core._
 import Keys._
-import PlayExceptions.CompilationException
+import PlayExceptions._
 
 trait PlayReloader {
   this: PlayCommands with PlayPositionMapper =>

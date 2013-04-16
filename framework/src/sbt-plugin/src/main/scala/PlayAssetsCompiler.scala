@@ -90,7 +90,7 @@ trait PlayAssetsCompiler {
     (_ ** "*.less"),
     lessEntryPoints,
     { (name, min) => name.replace(".less", if (min) ".min.css" else ".css") },
-    { (lessFile, options) => play.core.less.LessCompiler.compile(lessFile, options) },
+    { (lessFile, options) => play.core.less.LessCompiler.compile(lessFile) },
     lessOptions
   )
  
