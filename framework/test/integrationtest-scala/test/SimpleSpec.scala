@@ -108,7 +108,7 @@ class SimpleSpec extends Specification {
 
     "execute in the user execution context" in new WithServer() {
       val response = Await.result(wsCall(controllers.routes.Application.thread()).get(), Duration.Inf)
-      response.body must startWith("play-akka.actor.default-dispatcher-")
+      response.body must startWith("iteratee-execution-context-")
     }
 
     "execute body parser in the user execution context" in new WithServer() {
@@ -116,6 +116,15 @@ class SimpleSpec extends Specification {
       response.body must startWith("play-akka.actor.default-dispatcher-")
     }
 
+    "support streaming using an enumerator" in new WithServer() {
+      val response = Await.result(wsCall(controllers.routes.Application.streamEnumerator()).get(), Duration.Inf)
+      response.body must_== "abc"
+    }
+
+    "support feeding using an enumerator" in new WithServer() {
+      val response = Await.result(wsCall(controllers.routes.Application.feedEnumerator()).get(), Duration.Inf)
+      response.body must_== "abc"
+    }
   }
 
 }

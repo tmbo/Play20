@@ -7,11 +7,22 @@ import org.apache.commons.lang3.reflect.MethodUtils
 import scala.util.parsing.input._
 import scala.util.parsing.combinator._
 import scala.util.matching._
+import java.net.URI
+import scala.util.control.Exception
+import scala.collection.concurrent.TrieMap
+import play.core.j.JavaActionAnnotations
 
 trait PathPart
 
-case class DynamicPart(name: String, constraint: String) extends PathPart {
-  override def toString = """DynamicPart("""" + name + "\", \"\"\"" + constraint + "\"\"\")" // "
+case class DynamicPart(name: String, constraint: String, encodeable: Boolean) extends PathPart {
+  // Backwards binary compatible
+  def this(name: String, constraint: String) = this(name, constraint, false)
+
+  override def toString = """DynamicPart("""" + name + "\", \"\"\"" + constraint + "\"\"\")"
+}
+
+object DynamicPart {
+  def apply(name: String, constraint: String) = new DynamicPart(name, constraint)
 }
 
 case class StaticPart(value: String) extends PathPart {
@@ -22,12 +33,24 @@ case class PathPattern(parts: Seq[PathPart]) {
 
   import java.util.regex._
 
+  private def decodeIfEncoded(decode: Boolean, groupCount: Int): Matcher => Either[Throwable, String] = matcher =>
+    Exception.allCatch[String].either {
+      if (decode) {
+        val group = matcher.group(groupCount)
+        // If param is not correctly encoded, get path will return null, so we prepend a / to it
+        new URI("/" + group).getPath.drop(1)
+      } else
+        matcher.group(groupCount)
+    }
+
   lazy val (regex, groups) = {
-    Some(parts.foldLeft("", Map.empty[String, Int], 0) { (s, e) =>
+    Some(parts.foldLeft("", Map.empty[String, Matcher => Either[Throwable, String]], 0) { (s, e) =>
       e match {
         case StaticPart(p) => ((s._1 + Pattern.quote(p)), s._2, s._3)
-        case DynamicPart(k, r) => {
-          ((s._1 + "(" + r + ")"), (s._2 + (k -> (s._3 + 1))), s._3 + 1 + Pattern.compile(r).matcher("").groupCount)
+        case DynamicPart(k, r, encodeable) => {
+          ((s._1 + "(" + r + ")"),
+            (s._2 + (k -> decodeIfEncoded(encodeable, s._3 + 1))),
+            s._3 + 1 + Pattern.compile(r).matcher("").groupCount)
         }
       }
     }).map {
@@ -35,24 +58,25 @@ case class PathPattern(parts: Seq[PathPart]) {
     }.get
   }
 
-  def apply(path: String): Option[Map[String, String]] = {
+  def apply(path: String): Option[Map[String, Either[Throwable, String]]] = {
     val matcher = regex.matcher(path)
     if (matcher.matches) {
       Some(groups.map {
-        case (name, g) => name -> matcher.group(g)
+        case (name, g) => name -> g(matcher)
       }.toMap)
     } else {
       None
     }
   }
 
+  // Unused, but left here for the purposes of backwards compatibility
   def has(key: String): Boolean = parts.exists {
-    case DynamicPart(name, _) if name == key => true
+    case DynamicPart(name, _, _) if name == key => true
     case _ => false
   }
 
   override def toString = parts.map {
-    case DynamicPart(name, constraint) => "$" + name + "<" + constraint + ">"
+    case DynamicPart(name, constraint, _) => "$" + name + "<" + constraint + ">"
     case StaticPart(path) => path
   }.mkString
 
@@ -62,8 +86,11 @@ case class PathPattern(parts: Seq[PathPart]) {
  * provides Play's router implementation
  */
 object Router {
-  
-   object Route {
+
+  // Cache of annotation information for improving Java performance.
+  private val javaActionAnnotations = new TrieMap[HandlerDef, JavaActionAnnotations]
+
+  object Route {
 
     trait ParamsExtractor {
       def unapply(request: RequestHeader): Option[RouteParams]
@@ -100,10 +127,10 @@ object Router {
 
   case class Param[T](name: String, value: Either[String, T])
 
-  case class RouteParams(path: Map[String, String], queryString: Map[String, Seq[String]]) {
+  case class RouteParams(path: Map[String, Either[Throwable, String]], queryString: Map[String, Seq[String]]) {
 
     def fromPath[T](key: String, default: Option[T] = None)(implicit binder: PathBindable[T]): Param[T] = {
-      Param(key, path.get(key).map(binder.bind(key, _)).getOrElse {
+      Param(key, path.get(key).map(v => v.fold(t => Left(t.getMessage), binder.bind(key, _))).getOrElse {
         default.map(d => Right(d)).getOrElse(Left("Missing parameter: " + key))
       })
     }
@@ -136,13 +163,19 @@ object Router {
     }
 
     implicit def wrapJava: HandlerInvoker[play.mvc.Result] = new HandlerInvoker[play.mvc.Result] {
-      def call(call: => play.mvc.Result, handler: HandlerDef) = {
-        new play.core.j.JavaAction {
+      def call(call: => play.mvc.Result, handlerDef: HandlerDef) = {
+        new {
+          val annotations = javaActionAnnotations.getOrElseUpdate(handlerDef, {
+            val controller = handlerDef.ref.getClass.getClassLoader.loadClass(handlerDef.controller)
+            val method = MethodUtils.getMatchingAccessibleMethod(controller, handlerDef.method, handlerDef.parameterTypes: _*)
+            new JavaActionAnnotations(controller, method)
+          })
+        } with play.core.j.JavaAction {
+          val parser = annotations.parser
           def invocation = call
-          lazy val controller = handler.ref.getClass.getClassLoader.loadClass(handler.controller)
-          lazy val method = MethodUtils.getMatchingAccessibleMethod(controller, handler.method, handler.parameterTypes: _*)
         }
       }
+
     }
 
     implicit def javaBytesWebSocket: HandlerInvoker[play.mvc.WebSocket[Array[Byte]]] = new HandlerInvoker[play.mvc.WebSocket[Array[Byte]]] {
@@ -320,17 +353,22 @@ object Router {
       d.call(call, handler) match {
         case javaAction: play.core.j.JavaAction => new play.core.j.JavaAction with RequestTaggingHandler {
           def invocation = javaAction.invocation
-          def controller = javaAction.controller
-          def method = javaAction.method
+
+          val annotations = javaAction.annotations
+          val parser = javaAction.annotations.parser
+
           def tagRequest(rh: RequestHeader) = doTagRequest(rh, handler)
         }
+
         case action: EssentialAction => new EssentialAction with RequestTaggingHandler {
           def apply(rh: RequestHeader) = action(rh)
           def tagRequest(rh: RequestHeader) = doTagRequest(rh, handler)
         }
+
         case ws @ WebSocket(f) => {
           WebSocket[ws.FRAMES_TYPE](rh => f(doTagRequest(rh, handler)))(ws.frameFormatter)
         }
+
         case handler => handler
       }
     }

@@ -170,7 +170,7 @@ object Evolutions {
         }
         val error = problem.getString("last_problem")
 
-        Logger("play").error(error)
+        Play.logger.error(error)
 
         val humanScript = "# --- Rev:" + revision + "," + (if (state == "applying_up") "Ups" else "Downs") + " - " + hash + "\n\n" + script;
 
@@ -182,15 +182,15 @@ object Evolutions {
       case NonFatal(_) => try {
         execute(
           """
-                    create table play_evolutions (
-                        id int not null primary key, hash varchar(255) not null, 
-                        applied_at timestamp not null, 
-                        apply_script text, 
-                        revert_script text, 
-                        state varchar(255), 
-                        last_problem text
-                    )
-                """)
+              create table play_evolutions (
+                  id int not null primary key, hash varchar(255) not null, 
+                  applied_at timestamp not null, 
+                  apply_script text, 
+                  revert_script text, 
+                  state varchar(255), 
+                  last_problem text
+              )
+          """)
       } catch { case NonFatal(ex) => Logger.warn("play_evolutions table already existed") }
     } finally {
       connection.close()
@@ -303,19 +303,23 @@ object Evolutions {
    */
   def evolutionScript(api: DBApi, path: File, applicationClassloader: ClassLoader, db: String): Seq[Product with Serializable with Script] = {
     val application = applicationEvolutions(path, applicationClassloader, db)
-    val database = databaseEvolutions(api, db)
 
-    val (nonConflictingDowns, dRest) = database.span(e => !application.headOption.exists(e.revision <= _.revision))
-    val (nonConflictingUps, uRest) = application.span(e => !database.headOption.exists(_.revision >= e.revision))
+    Option(application).filterNot(_.isEmpty).map {
+      case application =>
+        val database = databaseEvolutions(api, db)
 
-    val (conflictingDowns, conflictingUps) = dRest.zip(uRest).takeWhile {
-      case (down, up) => down.hash != up.hash
-    }.unzip
+        val (nonConflictingDowns, dRest) = database.span(e => !application.headOption.exists(e.revision <= _.revision))
+        val (nonConflictingUps, uRest) = application.span(e => !database.headOption.exists(_.revision >= e.revision))
 
-    val ups = (nonConflictingUps ++ conflictingUps).reverse.map(e => UpScript(e, e.sql_up))
-    val downs = (nonConflictingDowns ++ conflictingDowns).map(e => DownScript(e, e.sql_down))
+        val (conflictingDowns, conflictingUps) = dRest.zip(uRest).takeWhile {
+          case (down, up) => down.hash != up.hash
+        }.unzip
 
-    downs ++ ups
+        val ups = (nonConflictingUps ++ conflictingUps).reverse.map(e => UpScript(e, e.sql_up))
+        val downs = (nonConflictingDowns ++ conflictingDowns).map(e => DownScript(e, e.sql_down))
+
+        downs ++ ups
+    }.getOrElse(Nil)
   }
 
   /**
@@ -333,8 +337,8 @@ object Evolutions {
 
       Collections.unfoldLeft(executeQuery(
         """
-                    select id, hash, apply_script, revert_script from play_evolutions order by id
-                """)) { rs =>
+            select id, hash, apply_script, revert_script from play_evolutions order by id
+        """)) { rs =>
         rs.next match {
           case false => None
           case true => {
@@ -413,6 +417,8 @@ class EvolutionsPlugin(app: Application) extends Plugin with HandleWebCommandSup
 
   import Evolutions._
 
+  lazy val dbApi = app.plugin[DBPlugin].map(_.api).getOrElse(throw new Exception("there should be a database plugin registered at this point but looks like it's not available, so evolution won't work. Please make sure you register a db plugin properly"))
+
   /**
    * Is this plugin enabled.
    *
@@ -428,29 +434,28 @@ class EvolutionsPlugin(app: Application) extends Plugin with HandleWebCommandSup
    * Checks the evolutions state.
    */
   override def onStart() {
-    val api = app.plugin[DBPlugin].map(_.api).getOrElse(throw new Exception("there should be a database plugin registered at this point but looks like it's not available, so evolution won't work. Please make sure you register a db plugin properly"))
-    api.datasources.foreach {
+    dbApi.datasources.foreach {
       case (ds, db) => {
         withLock(ds) {
-          val script = evolutionScript(api, app.path, app.classloader, db)
+          val script = evolutionScript(dbApi, app.path, app.classloader, db)
           val hasDown = script.find(_.isInstanceOf[DownScript]).isDefined
           if (!script.isEmpty) {
             app.mode match {
-              case Mode.Test => Evolutions.applyScript(api, db, script)
-              case Mode.Dev if app.configuration.getBoolean("applyEvolutions." + db).filter(_ == true).isDefined => Evolutions.applyScript(api, db, script)
-              case Mode.Prod if !hasDown && app.configuration.getBoolean("applyEvolutions." + db).filter(_ == true).isDefined => Evolutions.applyScript(api, db, script)
+              case Mode.Test => Evolutions.applyScript(dbApi, db, script)
+              case Mode.Dev if app.configuration.getBoolean("applyEvolutions." + db).filter(_ == true).isDefined => Evolutions.applyScript(dbApi, db, script)
+              case Mode.Prod if !hasDown && app.configuration.getBoolean("applyEvolutions." + db).filter(_ == true).isDefined => Evolutions.applyScript(dbApi, db, script)
               case Mode.Prod if hasDown &&
                 app.configuration.getBoolean("applyEvolutions." + db).filter(_ == true).isDefined &&
-                app.configuration.getBoolean("applyDownEvolutions." + db).filter(_ == true).isDefined => Evolutions.applyScript(api, db, script)
+                app.configuration.getBoolean("applyDownEvolutions." + db).filter(_ == true).isDefined => Evolutions.applyScript(dbApi, db, script)
               case Mode.Prod if hasDown => {
-                Logger("play").warn("Your production database [" + db + "] needs evolutions! \n\n" + toHumanReadableScript(script))
-                Logger("play").warn("Run with -DapplyEvolutions." + db + "=true and -DapplyDownEvolutions." + db + "=true if you want to run them automatically (be careful)")
+                Play.logger.warn("Your production database [" + db + "] needs evolutions, including downs! \n\n" + toHumanReadableScript(script))
+                Play.logger.warn("Run with -DapplyEvolutions." + db + "=true and -DapplyDownEvolutions." + db + "=true if you want to run them automatically, including downs (be careful, especially if your down evolutions drop existing data)")
 
                 throw InvalidDatabaseRevision(db, toHumanReadableScript(script))
               }
               case Mode.Prod => {
-                Logger("play").warn("Your production database [" + db + "] needs evolutions! \n\n" + toHumanReadableScript(script))
-                Logger("play").warn("Run with -DapplyEvolutions." + db + "=true if you want to run them automatically (be careful)")
+                Play.logger.warn("Your production database [" + db + "] needs evolutions! \n\n" + toHumanReadableScript(script))
+                Play.logger.warn("Run with -DapplyEvolutions." + db + "=true if you want to run them automatically (be careful)")
 
                 throw InvalidDatabaseRevision(db, toHumanReadableScript(script))
               }
@@ -502,7 +507,7 @@ class EvolutionsPlugin(app: Application) extends Plugin with HandleWebCommandSup
       case e: SQLException =>
         if (attempts == 0) throw e
         else {
-          Logger("play").warn("Exception while attempting to lock evolutions (other node probably has lock), sleeping for 1 sec")
+          Play.logger.warn("Exception while attempting to lock evolutions (other node probably has lock), sleeping for 1 sec")
           c.rollback()
           Thread.sleep(1000)
           lock(c, s, attempts - 1)
@@ -520,8 +525,7 @@ class EvolutionsPlugin(app: Application) extends Plugin with HandleWebCommandSup
 
     val applyEvolutions = """/@evolutions/apply/([a-zA-Z0-9_]+)""".r
     val resolveEvolutions = """/@evolutions/resolve/([a-zA-Z0-9_]+)/([0-9]+)""".r
-    lazy val dbApi = new BoneCPApi(app.configuration.getConfig("db").get, app.classloader)
-    
+
     request.path match {
 
       case applyEvolutions(db) => {
@@ -571,7 +575,7 @@ object OfflineEvolutions {
     val script = Evolutions.evolutionScript(dbApi, appPath, classloader, dbName)
 
     if (!Play.maybeApplication.exists(_.mode == Mode.Test)) {
-      Logger("play").warn("Applying evolution script for database '" + dbName + "':\n\n" + Evolutions.toHumanReadableScript(script))
+      Play.logger.warn("Applying evolution script for database '" + dbName + "':\n\n" + Evolutions.toHumanReadableScript(script))
     }
     Evolutions.applyScript(dbApi, dbName, script)
 
@@ -592,7 +596,7 @@ object OfflineEvolutions {
     val dbApi = new BoneCPApi(c, classloader)
 
     if (!Play.maybeApplication.exists(_.mode == Mode.Test)) {
-      Logger("play").warn("Resolving evolution [" + revision + "] for database '" + dbName + "'")
+      Play.logger.warn("Resolving evolution [" + revision + "] for database '" + dbName + "'")
     }
     Evolutions.resolve(dbApi, dbName, revision)
 
