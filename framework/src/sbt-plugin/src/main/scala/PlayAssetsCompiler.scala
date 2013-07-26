@@ -51,7 +51,7 @@ trait PlayAssetsCompiler {
           case (sourceFile, name) => {
             if (changedFiles.contains(sourceFile) || dependencies.contains(new File(resources, "public/" + naming(name, false)))) {
               val (debug, min, dependencies) = try {
-                compile(sourceFile, options ++ requireSupport)
+                compile(sourceFile, requireSupport ++ options)
               } catch {
                 case e: AssetCompilationException => throw reportCompilationError(state, e)
               }
